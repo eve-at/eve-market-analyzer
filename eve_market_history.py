@@ -12,14 +12,14 @@ from watchdog.events import FileSystemEventHandler
 
 
 class MarketLogHandler(FileSystemEventHandler):
-    """Обработчик событий файловой системы для логов маркета"""
+    """File system event handler for market logs"""
     def __init__(self, callback):
         super().__init__()
         self.callback = callback
         self.pattern = re.compile(r'^(.+)-(.+)-\d{4}\.\d{2}\.\d{2} \d{6}\.txt$')
     
     def on_created(self, event):
-        """Обработка создания нового файла"""
+        """Handle new file creation"""
         if event.is_directory:
             return
         
@@ -29,23 +29,23 @@ class MarketLogHandler(FileSystemEventHandler):
         if match:
             region_name = match.group(1)
             item_name = match.group(2)
-            print(f"Обнаружен новый лог маркета: {region_name} - {item_name}")
+            print(f"New market log detected: {region_name} - {item_name}")
             self.callback(region_name, item_name)
 
 
 class SuggestionItem:
-    """Класс для элемента подсказки с собственным обработчиком"""
+    """Class for suggestion item with its own handler"""
     def __init__(self, name, item_id, callback):
         self.name = name
         self.item_id = item_id
         self.callback = callback
     
     def on_click(self, e):
-        """Обработчик клика"""
+        """Click handler"""
         self.callback(self.name, self.item_id)
     
     def build(self):
-        """Создание UI элемента"""
+        """Create UI element"""
         btn = ft.Button(
             content=ft.Container(
                 content=ft.Text(self.name, size=13),
@@ -63,7 +63,7 @@ class SuggestionItem:
 
 
 class AutoCompleteField:
-    """Класс для поля с автозаполнением"""
+    """Field with autocomplete functionality"""
     def __init__(self, label, hint_text, default_value, data_dict, on_select_callback, on_validation_change=None):
         self.label = label
         self.hint_text = hint_text
@@ -76,7 +76,7 @@ class AutoCompleteField:
         self.selected_name = None
         self.is_valid = True
         
-        # UI элементы
+        # UI elements
         self.text_field = ft.TextField(
             label=label,
             hint_text=hint_text,
@@ -97,29 +97,29 @@ class AutoCompleteField:
             spacing=2,
         )
         
-        # Основной контейнер с полем
+        # Main container with field
         self.field_container = ft.Column([
             self.text_field,
             self.id_label,
         ], spacing=5)
         
-        # Контейнер для подсказок с абсолютным позиционированием
+        # Container for suggestions with absolute positioning
         self.suggestions_container = ft.Container(
             content=self.suggestions_column,
             visible=False,
         )
         
-        # Используем Column для простого размещения
+        # Use Column for simple layout
         self.container = ft.Column([
             self.field_container,
             self.suggestions_container,
         ], spacing=0)
     
     def on_text_change(self, e):
-        """Обработка изменения текста"""
+        """Handle text change"""
         query = self.text_field.value.strip()
         
-        # Сбрасываем ошибку при изменении текста
+        # Reset error on text change
         if self.text_field.border_color == ft.Colors.RED:
             self.text_field.border_color = None
             self.text_field.error_text = None
@@ -142,11 +142,11 @@ class AutoCompleteField:
                 pass
             return
         
-        # Поиск совпадений
+        # Search for matches
         matches = self.search_matches(query)
         
         if matches:
-            self.show_suggestions(matches[:5])  # Максимум 5 вариантов
+            self.show_suggestions(matches[:5])  # Maximum 5 options
         else:
             self.suggestions_column.visible = False
             self.suggestions_container.visible = False
@@ -158,7 +158,7 @@ class AutoCompleteField:
                 pass
     
     def search_matches(self, query):
-        """Поиск совпадений в данных"""
+        """Search for matches in data"""
         query_lower = query.lower()
         matches = []
         
@@ -172,7 +172,7 @@ class AutoCompleteField:
         return matches
     
     def show_suggestions(self, matches):
-        """Отображение списка подсказок"""
+        """Display list of suggestions"""
         self.suggestions_column.controls.clear()
         
         for name, item_id in matches:
@@ -188,49 +188,49 @@ class AutoCompleteField:
             pass
     
     def select_suggestion(self, name, item_id):
-        """Выбор варианта из списка"""
+        """Select option from list"""
         self.text_field.value = name
         self.selected_name = name
         self.selected_id = item_id
         self.is_valid = True
         
-        # Сбрасываем ошибки
+        # Reset errors
         self.text_field.border_color = None
         self.text_field.error_text = None
         
-        # Скрыть подсказки
+        # Hide suggestions
         self.suggestions_column.visible = False
         self.suggestions_container.visible = False
         self.suggestions_column.controls.clear()
         
-        # Показать ID
+        # Show ID
         self.id_label.value = f"ID: {item_id}"
         self.id_label.color = ft.Colors.GREY_600
         self.id_label.visible = True
         
-        # Обновить UI только если элементы уже на странице
+        # Update UI only if elements are already on page
         try:
             if self.text_field.page:
                 self.text_field.update()
                 self.suggestions_container.update()
                 self.id_label.update()
                 
-                # Уведомляем о изменении валидности
+                # Notify about validation change
                 if self.on_validation_change:
                     self.on_validation_change(True)
         except:
             pass
         
-        # Вызвать callback
+        # Call callback
         if self.on_select_callback:
             self.on_select_callback(name, item_id)
     
     def get_selected_id(self):
-        """Получить выбранный ID"""
+        """Get selected ID"""
         return self.selected_id
     
     def get_value(self):
-        """Получить текущее значение поля"""
+        """Get current field value"""
         return self.text_field.value
 
 
@@ -241,29 +241,29 @@ class EVEMarketApp:
         self.page.window.width = 1000
         self.page.window.height = 700
         
-        # Загрузка статических данных
+        # Load static data
         self.regions_data = {}  # {name: id}
         self.items_data = {}    # {name: id}
         self.load_static_data()
         
-        # UI элементы
-        self.status_text = ft.Text("Введите название региона и предмета", size=14)
+        # UI elements
+        self.status_text = ft.Text("Enter region and item name", size=14)
         self.data_table = None
         self.data_container = ft.Column(expand=True)
         
-        # Loader (индикатор загрузки)
+        # Loader (loading indicator)
         self.loader = ft.ProgressRing(visible=False, width=50, height=50)
         self.loader_container = ft.Container(
             content=ft.Column([
                 self.loader,
-                ft.Text("Загрузка данных...", size=14)
+                ft.Text("Loading data...", size=14)
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             alignment=ft.Alignment.CENTER,
             visible=False,
             expand=True
         )
         
-        # Кнопка Get
+        # Get button
         self.get_button = ft.Button(
             "Get",
             icon=ft.Icons.DOWNLOAD,
@@ -274,7 +274,7 @@ class EVEMarketApp:
             )
         )
         
-        # Поля с автозаполнением
+        # Autocomplete fields
         self.region_field = AutoCompleteField(
             label="Region",
             hint_text="The Forge",
@@ -295,21 +295,21 @@ class EVEMarketApp:
         
         self.setup_ui()
         
-        # Устанавливаем значения по умолчанию после добавления UI на страницу
+        # Set default values after adding UI to page
         self.set_default_values()
         
-        # Мониторинг директории с логами маркета
-        self.is_processing = False  # Флаг обработки запроса
+        # Market logs directory monitoring
+        self.is_processing = False  # Request processing flag
         self.observer = None
         self.marketlogs_dir = Path.home() / "Documents" / "EVE" / "logs" / "Marketlogs"
         self.start_file_monitoring()
     
     def load_static_data(self):
-        """Загрузка статических данных из CSV файлов"""
-        # Определяем путь к папке data
+        """Load static data from CSV files"""
+        # Define path to data folder
         data_dir = os.path.join(os.path.dirname(__file__), 'data')
         
-        # Загрузка регионов
+        # Load regions
         regions_file = os.path.join(data_dir, 'mapRegions.csv')
         try:
             with open(regions_file, 'r', encoding='utf-8') as f:
@@ -319,11 +319,11 @@ class EVEMarketApp:
                     region_name = row.get('regionName', '')
                     if region_id and region_name:
                         self.regions_data[region_name] = region_id
-            print(f"Загружено регионов: {len(self.regions_data)}")
+            print(f"Loaded regions: {len(self.regions_data)}")
         except Exception as e:
-            print(f"Ошибка загрузки регионов: {e}")
+            print(f"Error loading regions: {e}")
         
-        # Загрузка типов предметов (только опубликованные)
+        # Load item types (only published)
         items_file = os.path.join(data_dir, 'invTypes.csv')
         try:
             with open(items_file, 'r', encoding='utf-8') as f:
@@ -333,15 +333,15 @@ class EVEMarketApp:
                     type_name = row.get('typeName', '')
                     published = row.get('published', '0')
                     
-                    # Загружаем только опубликованные предметы
+                    # Load only published items
                     if type_id and type_name and published == '1':
                         self.items_data[type_name] = type_id
-            print(f"Загружено предметов: {len(self.items_data)}")
+            print(f"Loaded items: {len(self.items_data)}")
         except Exception as e:
-            print(f"Ошибка загрузки предметов: {e}")
+            print(f"Error loading items: {e}")
     
     def set_default_values(self):
-        """Установка значений по умолчанию"""
+        """Set default values"""
         # The Forge
         if "The Forge" in self.regions_data:
             self.region_field.select_suggestion("The Forge", self.regions_data["The Forge"])
@@ -351,16 +351,16 @@ class EVEMarketApp:
             self.item_field.select_suggestion("Retriever", self.items_data["Retriever"])
     
     def on_region_selected(self, name, region_id):
-        """Callback при выборе региона"""
-        print(f"Выбран регион: {name} (ID: {region_id})")
+        """Callback when region is selected"""
+        print(f"Selected region: {name} (ID: {region_id})")
     
     def on_item_selected(self, name, item_id):
-        """Callback при выборе предмета"""
-        print(f"Выбран предмет: {name} (ID: {item_id})")
+        """Callback when item is selected"""
+        print(f"Selected item: {name} (ID: {item_id})")
     
     def on_field_validation_change(self, is_valid):
-        """Callback при изменении валидности полей"""
-        # Проверяем валидность обоих полей
+        """Callback when field validity changes"""
+        # Check validity of both fields
         both_valid = self.region_field.is_valid and self.item_field.is_valid
         self.get_button.disabled = not both_valid
         
@@ -371,28 +371,28 @@ class EVEMarketApp:
             pass
     
     def setup_ui(self):
-        """Настройка пользовательского интерфейса"""
-        # Заголовок
+        """Setup user interface"""
+        # Title
         title = ft.Text(
             "EVE Online Market History",
             size=24,
             weight=ft.FontWeight.BOLD
         )
         
-        # Информация
+        # Info
         info_text = ft.Text(
-            "Начните вводить название (минимум 3 символа) для поиска",
+            "Start typing a name (minimum 3 characters) to search",
             size=12,
             color=ft.Colors.GREY_700
         )
         
-        # Поля ввода в ряд
+        # Input fields in a row
         input_row = ft.Row([
             self.region_field.container,
             self.item_field.container
         ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)
         
-        # Компоновка
+        # Layout
         self.page.add(
             ft.Container(
                 content=ft.Column([
@@ -411,86 +411,91 @@ class EVEMarketApp:
             )
         )
     
-    def load_market_data(self, e):
-        """Загрузка данных из API"""
-        # Устанавливаем флаг обработки
+    async def load_market_data(self, e):
+        """Load data from API"""
+        # Set processing flag
         self.is_processing = True
         
-        # Disable кнопку Get и показываем loader (если еще не показан)
+        # Disable Get button and show loader (if not already shown)
         if not self.get_button.disabled:
             self.get_button.disabled = True
             self.loader_container.visible = True
             self.data_container.visible = False
             self.page.update()
         
-        # Получаем выбранные ID
+        # Get selected IDs
         region_id = self.region_field.get_selected_id()
         type_id = self.item_field.get_selected_id()
         
         if not region_id or not type_id:
-            self.status_text.value = "Ошибка: выберите регион и предмет из списка"
+            self.status_text.value = "Error: select region and item from list"
             self.status_text.color = ft.Colors.RED
             self.get_button.disabled = False
             self.loader_container.visible = False
             self.data_container.visible = True
             self.page.update()
-            self.is_processing = False  # Снимаем флаг
+            self.is_processing = False  # Clear flag
             return
         
-        self.status_text.value = "Загрузка данных..."
+        self.status_text.value = "Loading data..."
         self.status_text.color = ft.Colors.BLUE
         self.page.update()
         
         try:
-            # Запрос к API
-            url = f"https://esi.evetech.net/latest/markets/{region_id}/history/"
-            params = {
-                "type_id": type_id,
-                "datasource": "tranquility"
-            }
+            # API request - execute in separate thread
+            import asyncio
+            loop = asyncio.get_event_loop()
             
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
+            def fetch_data():
+                url = f"https://esi.evetech.net/latest/markets/{region_id}/history/"
+                params = {
+                    "type_id": type_id,
+                    "datasource": "tranquility"
+                }
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                return response.json()
             
-            data = response.json()
+            # Execute request asynchronously
+            data = await loop.run_in_executor(None, fetch_data)
             
             if not data:
-                self.status_text.value = "Данные не найдены"
+                self.status_text.value = "Data not found"
                 self.status_text.color = ft.Colors.ORANGE
                 self.get_button.disabled = False
                 self.loader_container.visible = False
                 self.data_container.visible = True
                 self.page.update()
-                self.is_processing = False  # Снимаем флаг
+                self.is_processing = False  # Clear flag
                 return
             
-            # Сортировка по убыванию даты
+            # Sort by date descending
             data_sorted = sorted(data, key=lambda x: x['date'], reverse=True)
             
             self.display_data(data_sorted)
-            self.status_text.value = f"Загружено записей: {len(data_sorted)}"
+            self.status_text.value = f"Loaded records: {len(data_sorted)}"
             self.status_text.color = ft.Colors.GREEN
             
         except requests.exceptions.RequestException as ex:
-            self.status_text.value = f"Ошибка загрузки: {str(ex)}"
+            self.status_text.value = f"Loading error: {str(ex)}"
             self.status_text.color = ft.Colors.RED
         except Exception as ex:
-            self.status_text.value = f"Ошибка: {str(ex)}"
+            self.status_text.value = f"Error: {str(ex)}"
             self.status_text.color = ft.Colors.RED
         finally:
-            # Снимаем флаг обработки в любом случае
+            # Clear processing flag in any case
             self.is_processing = False
-            # Enable кнопку обратно
+            # Enable button back
             self.get_button.disabled = False
-            # Скрываем loader, показываем таблицу
+            # Hide loader, show table
             self.loader_container.visible = False
             self.data_container.visible = True
         
         self.page.update()
     
     def display_data(self, data):
-        """Отображение данных в таблице"""
-        # Создание таблицы
+        """Display data in table"""
+        # Create table
         self.data_table = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Date", weight=ft.FontWeight.BOLD)),
@@ -510,7 +515,7 @@ class EVEMarketApp:
             data_row_max_height=45,
         )
         
-        # Заполнение данными
+        # Fill with data
         for item in data:
             date_str = item.get('date', 'N/A')
             order_count = str(item.get('order_count', 0))
@@ -532,66 +537,66 @@ class EVEMarketApp:
                 )
             )
         
-        # Обновление контейнера с данными
+        # Update data container
         self.data_container.controls.clear()
-        # Оборачиваем таблицу в контейнер с прокруткой
+        # Wrap table in scrollable container
         scrollable_table = ft.Container(
             content=ft.Column([self.data_table], scroll=ft.ScrollMode.AUTO),
-            height=500,  # Фиксированная высота для включения прокрутки
+            height=500,  # Fixed height for scrolling
         )
         self.data_container.controls.append(scrollable_table)
         self.page.update()
     
     def start_file_monitoring(self):
-        """Запуск мониторинга директории с логами маркета"""
+        """Start market logs directory monitoring"""
         if not self.marketlogs_dir.exists():
-            print(f"Директория {self.marketlogs_dir} не существует. Мониторинг не запущен.")
+            print(f"Directory {self.marketlogs_dir} does not exist. Monitoring not started.")
             return
         
         event_handler = MarketLogHandler(self.on_market_log_created)
         self.observer = Observer()
         self.observer.schedule(event_handler, str(self.marketlogs_dir), recursive=False)
         self.observer.start()
-        print(f"Запущен мониторинг директории: {self.marketlogs_dir}")
+        print(f"Started monitoring directory: {self.marketlogs_dir}")
     
     def stop_file_monitoring(self):
-        """Остановка мониторинга"""
+        """Stop monitoring"""
         if self.observer:
             self.observer.stop()
             self.observer.join()
-            print("Мониторинг остановлен")
+            print("Monitoring stopped")
     
     def on_market_log_created(self, region_name, item_name):
-        """Callback при создании нового лога маркета"""
+        """Callback when new market log is created"""
         if self.is_processing:
-            print(f"Обработка уже выполняется, пропускаем: {region_name} - {item_name}")
+            print(f"Processing already in progress, skipping: {region_name} - {item_name}")
             return
         
-        print(f"Обработка нового лога: {region_name} - {item_name}")
+        print(f"Processing new log: {region_name} - {item_name}")
         
-        # Устанавливаем значения в поля через UI поток
+        # Set values in fields via UI thread
         async def update_fields():
-            # Проверяем что регион и предмет существуют в данных
+            # Check that region and item exist in data
             if region_name in self.regions_data and item_name in self.items_data:
                 region_id = self.regions_data[region_name]
                 item_id = self.items_data[item_name]
                 
-                # Устанавливаем значения в поля
+                # Set values in fields
                 self.region_field.select_suggestion(region_name, region_id)
                 self.item_field.select_suggestion(item_name, item_id)
                 
-                # Сразу показываем loader и disable кнопку
+                # Show loader and disable button immediately
                 self.get_button.disabled = True
                 self.loader_container.visible = True
                 self.data_container.visible = False
                 self.page.update()
                 
-                # Запускаем загрузку данных
-                self.load_market_data(None)
+                # Start data loading (await since it's async function)
+                await self.load_market_data(None)
             else:
-                print(f"Регион или предмет не найдены в базе данных: {region_name}, {item_name}")
+                print(f"Region or item not found in database: {region_name}, {item_name}")
         
-        # Выполняем обновление в UI потоке
+        # Execute update in UI thread
         self.page.run_task(update_fields)
 
 

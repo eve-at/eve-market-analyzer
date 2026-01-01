@@ -2,7 +2,35 @@ import flet as ft
 import requests
 import csv
 import os
+import re
+import threading
+import time
 from datetime import datetime
+from pathlib import Path
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+
+class MarketLogHandler(FileSystemEventHandler):
+    """Обработчик событий файловой системы для логов маркета"""
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.pattern = re.compile(r'^(.+)-(.+)-\d{4}\.\d{2}\.\d{2} \d{6}\.txt$')
+    
+    def on_created(self, event):
+        """Обработка создания нового файла"""
+        if event.is_directory:
+            return
+        
+        filename = Path(event.src_path).name
+        match = self.pattern.match(filename)
+        
+        if match:
+            region_name = match.group(1)
+            item_name = match.group(2)
+            print(f"Обнаружен новый лог маркета: {region_name} - {item_name}")
+            self.callback(region_name, item_name)
 
 
 class SuggestionItem:
@@ -257,6 +285,12 @@ class EVEMarketApp:
         
         # Устанавливаем значения по умолчанию после добавления UI на страницу
         self.set_default_values()
+        
+        # Мониторинг директории с логами маркета
+        self.is_processing = False  # Флаг обработки запроса
+        self.observer = None
+        self.marketlogs_dir = Path.home() / "Documents" / "EVE" / "logs" / "Marketlogs"
+        self.start_file_monitoring()
     
     def load_static_data(self):
         """Загрузка статических данных из CSV файлов"""
@@ -364,6 +398,9 @@ class EVEMarketApp:
     
     def load_market_data(self, e):
         """Загрузка данных из API"""
+        # Устанавливаем флаг обработки
+        self.is_processing = True
+        
         # Получаем выбранные ID
         region_id = self.region_field.get_selected_id()
         type_id = self.item_field.get_selected_id()
@@ -372,6 +409,7 @@ class EVEMarketApp:
             self.status_text.value = "Ошибка: выберите регион и предмет из списка"
             self.status_text.color = ft.Colors.RED
             self.page.update()
+            self.is_processing = False  # Снимаем флаг
             return
         
         self.status_text.value = "Загрузка данных..."
@@ -395,6 +433,7 @@ class EVEMarketApp:
                 self.status_text.value = "Данные не найдены"
                 self.status_text.color = ft.Colors.ORANGE
                 self.page.update()
+                self.is_processing = False  # Снимаем флаг
                 return
             
             # Сортировка по убыванию даты
@@ -410,6 +449,9 @@ class EVEMarketApp:
         except Exception as ex:
             self.status_text.value = f"Ошибка: {str(ex)}"
             self.status_text.color = ft.Colors.RED
+        finally:
+            # Снимаем флаг обработки в любом случае
+            self.is_processing = False
         
         self.page.update()
     
@@ -466,6 +508,52 @@ class EVEMarketApp:
         )
         self.data_container.controls.append(scrollable_table)
         self.page.update()
+    
+    def start_file_monitoring(self):
+        """Запуск мониторинга директории с логами маркета"""
+        if not self.marketlogs_dir.exists():
+            print(f"Директория {self.marketlogs_dir} не существует. Мониторинг не запущен.")
+            return
+        
+        event_handler = MarketLogHandler(self.on_market_log_created)
+        self.observer = Observer()
+        self.observer.schedule(event_handler, str(self.marketlogs_dir), recursive=False)
+        self.observer.start()
+        print(f"Запущен мониторинг директории: {self.marketlogs_dir}")
+    
+    def stop_file_monitoring(self):
+        """Остановка мониторинга"""
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
+            print("Мониторинг остановлен")
+    
+    def on_market_log_created(self, region_name, item_name):
+        """Callback при создании нового лога маркета"""
+        if self.is_processing:
+            print(f"Обработка уже выполняется, пропускаем: {region_name} - {item_name}")
+            return
+        
+        print(f"Обработка нового лога: {region_name} - {item_name}")
+        
+        # Устанавливаем значения в поля через UI поток
+        async def update_fields():
+            # Проверяем что регион и предмет существуют в данных
+            if region_name in self.regions_data and item_name in self.items_data:
+                region_id = self.regions_data[region_name]
+                item_id = self.items_data[item_name]
+                
+                # Устанавливаем значения
+                self.region_field.select_suggestion(region_name, region_id)
+                self.item_field.select_suggestion(item_name, item_id)
+                
+                # Запускаем загрузку данных
+                self.load_market_data(None)
+            else:
+                print(f"Регион или предмет не найдены в базе данных: {region_name}, {item_name}")
+        
+        # Выполняем обновление в UI потоке
+        self.page.run_task(update_fields)
 
 
 def main(page: ft.Page):

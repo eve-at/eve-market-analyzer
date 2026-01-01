@@ -19,18 +19,18 @@ class SuggestionItem:
     
     def build(self):
         """Создание UI элемента"""
-        return ft.GestureDetector(
-            content=ft.Container(
-                content=ft.Text(self.name, size=13, color=ft.Colors.BLACK),
-                bgcolor=ft.Colors.WHITE,
+        print(f">>> Создание кнопки для: {self.name}")
+        btn = ft.Button(
+            content=self.name,
+            width=300,
+            style=ft.ButtonStyle(
                 padding=ft.Padding(10, 10, 10, 10),
-                border=ft.border.all(1, ft.Colors.GREY_300),
-                border_radius=5,
-                width=300,
+                bgcolor=ft.Colors.WHITE,
             ),
-            on_tap=self.on_click,
-            mouse_cursor=ft.MouseCursor.CLICK,
         )
+        btn.on_click = self.on_click
+        print(f">>> Обработчик установлен для: {self.name}")
+        return btn
 
 
 class AutoCompleteField:
@@ -53,7 +53,7 @@ class AutoCompleteField:
             hint_text=hint_text,
             width=300,
             on_change=self.on_text_change,
-            on_blur=self.on_focus_lost,
+            # on_blur=self.on_focus_lost,  # Временно отключаем
             dense=True
         )
         
@@ -92,6 +92,10 @@ class AutoCompleteField:
     
     def on_focus_lost(self, e):
         """Обработка потери фокуса"""
+        # Задержка перед скрытием для обработки кликов по подсказкам
+        import time
+        time.sleep(0.2)
+        
         value = self.text_field.value.strip()
         
         # Если поле пустое - устанавливаем значение по умолчанию
@@ -189,20 +193,24 @@ class AutoCompleteField:
     
     def show_suggestions(self, matches):
         """Отображение списка подсказок"""
+        print(f">>> show_suggestions вызван с {len(matches)} совпадениями")
         self.suggestions_column.controls.clear()
         
         for name, item_id in matches:
             # Создаём элемент подсказки
+            print(f">>> Создание SuggestionItem для: {name}")
             suggestion_item = SuggestionItem(name, item_id, self.select_suggestion)
             self.suggestions_column.controls.append(suggestion_item.build())
         
         self.suggestions_column.visible = True
         self.suggestions_container.visible = True
+        print(f">>> Подсказки отображены, видимость установлена")
         try:
             if self.suggestions_container.page:
                 self.suggestions_container.update()
-        except:
-            pass
+                print(f">>> UI обновлен")
+        except Exception as e:
+            print(f">>> Ошибка обновления UI: {e}")
     
     def select_suggestion(self, name, item_id):
         """Выбор варианта из списка"""

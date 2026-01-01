@@ -238,8 +238,8 @@ class EVEMarketApp:
     def __init__(self, page: ft.Page):
         self.page = page
         self.page.title = "EVE Online - Market History"
-        self.page.window_width = 1100
-        self.page.window_height = 700
+        self.page.window.width = 1000
+        self.page.window.height = 700
         
         # Загрузка статических данных
         self.regions_data = {}  # {name: id}
@@ -250,6 +250,18 @@ class EVEMarketApp:
         self.status_text = ft.Text("Введите название региона и предмета", size=14)
         self.data_table = None
         self.data_container = ft.Column(expand=True)
+        
+        # Loader (индикатор загрузки)
+        self.loader = ft.ProgressRing(visible=False, width=50, height=50)
+        self.loader_container = ft.Container(
+            content=ft.Column([
+                self.loader,
+                ft.Text("Загрузка данных...", size=14)
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            alignment=ft.Alignment.CENTER,
+            visible=False,
+            expand=True
+        )
         
         # Кнопка Get
         self.get_button = ft.Button(
@@ -390,7 +402,10 @@ class EVEMarketApp:
                     ft.Row([self.get_button], alignment=ft.MainAxisAlignment.START),
                     self.status_text,
                     ft.Divider(),
-                    self.data_container
+                    ft.Stack([
+                        self.data_container,
+                        self.loader_container
+                    ], expand=True)
                 ], spacing=10),
                 padding=20
             )
@@ -401,6 +416,13 @@ class EVEMarketApp:
         # Устанавливаем флаг обработки
         self.is_processing = True
         
+        # Disable кнопку Get и показываем loader (если еще не показан)
+        if not self.get_button.disabled:
+            self.get_button.disabled = True
+            self.loader_container.visible = True
+            self.data_container.visible = False
+            self.page.update()
+        
         # Получаем выбранные ID
         region_id = self.region_field.get_selected_id()
         type_id = self.item_field.get_selected_id()
@@ -408,6 +430,9 @@ class EVEMarketApp:
         if not region_id or not type_id:
             self.status_text.value = "Ошибка: выберите регион и предмет из списка"
             self.status_text.color = ft.Colors.RED
+            self.get_button.disabled = False
+            self.loader_container.visible = False
+            self.data_container.visible = True
             self.page.update()
             self.is_processing = False  # Снимаем флаг
             return
@@ -432,6 +457,9 @@ class EVEMarketApp:
             if not data:
                 self.status_text.value = "Данные не найдены"
                 self.status_text.color = ft.Colors.ORANGE
+                self.get_button.disabled = False
+                self.loader_container.visible = False
+                self.data_container.visible = True
                 self.page.update()
                 self.is_processing = False  # Снимаем флаг
                 return
@@ -452,6 +480,11 @@ class EVEMarketApp:
         finally:
             # Снимаем флаг обработки в любом случае
             self.is_processing = False
+            # Enable кнопку обратно
+            self.get_button.disabled = False
+            # Скрываем loader, показываем таблицу
+            self.loader_container.visible = False
+            self.data_container.visible = True
         
         self.page.update()
     
@@ -543,9 +576,15 @@ class EVEMarketApp:
                 region_id = self.regions_data[region_name]
                 item_id = self.items_data[item_name]
                 
-                # Устанавливаем значения
+                # Устанавливаем значения в поля
                 self.region_field.select_suggestion(region_name, region_id)
                 self.item_field.select_suggestion(item_name, item_id)
+                
+                # Сразу показываем loader и disable кнопку
+                self.get_button.disabled = True
+                self.loader_container.visible = True
+                self.data_container.visible = False
+                self.page.update()
                 
                 # Запускаем загрузку данных
                 self.load_market_data(None)

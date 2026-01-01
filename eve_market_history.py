@@ -14,22 +14,23 @@ class SuggestionItem:
     
     def on_click(self, e):
         """Обработчик клика"""
-        print(f"!!! КЛИК ПО ПОДСКАЗКЕ: {self.name} (ID: {self.item_id})")
         self.callback(self.name, self.item_id)
     
     def build(self):
         """Создание UI элемента"""
-        print(f">>> Создание кнопки для: {self.name}")
         btn = ft.Button(
-            content=self.name,
+            content=ft.Container(
+                content=ft.Text(self.name, size=13),
+                alignment=ft.Alignment.CENTER_LEFT
+            ),
             width=300,
             style=ft.ButtonStyle(
                 padding=ft.Padding(10, 10, 10, 10),
                 bgcolor=ft.Colors.WHITE,
+                side=ft.BorderSide(1, ft.Colors.GREY_300)
             ),
         )
         btn.on_click = self.on_click
-        print(f">>> Обработчик установлен для: {self.name}")
         return btn
 
 
@@ -53,7 +54,6 @@ class AutoCompleteField:
             hint_text=hint_text,
             width=300,
             on_change=self.on_text_change,
-            # on_blur=self.on_focus_lost,  # Временно отключаем
             dense=True
         )
         
@@ -78,9 +78,6 @@ class AutoCompleteField:
         # Контейнер для подсказок с абсолютным позиционированием
         self.suggestions_container = ft.Container(
             content=self.suggestions_column,
-            bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_300),
-            border_radius=5,
             visible=False,
         )
         
@@ -89,51 +86,6 @@ class AutoCompleteField:
             self.field_container,
             self.suggestions_container,
         ], spacing=0)
-    
-    def on_focus_lost(self, e):
-        """Обработка потери фокуса"""
-        # Задержка перед скрытием для обработки кликов по подсказкам
-        import time
-        time.sleep(0.2)
-        
-        value = self.text_field.value.strip()
-        
-        # Если поле пустое - устанавливаем значение по умолчанию
-        if not value:
-            if self.default_value and self.default_value in self.data_dict:
-                self.select_suggestion(self.default_value, self.data_dict[self.default_value])
-            return
-        
-        # Проверяем валидность введенного значения
-        if value not in self.data_dict:
-            # Невалидное значение
-            self.is_valid = False
-            self.selected_id = None
-            self.selected_name = None
-            self.text_field.border_color = ft.Colors.RED
-            self.text_field.error_text = "Invalid item"
-            self.id_label.value = "Invalid Item"
-            self.id_label.color = ft.Colors.RED
-            self.id_label.visible = True
-            
-            if self.on_validation_change:
-                self.on_validation_change(False)
-        else:
-            # Валидное значение - устанавливаем его
-            self.select_suggestion(value, self.data_dict[value])
-        
-        # Скрываем подсказки при потере фокуса
-        self.suggestions_column.visible = False
-        self.suggestions_container.visible = False
-        self.suggestions_column.controls.clear()
-        
-        try:
-            if self.text_field.page:
-                self.text_field.update()
-                self.id_label.update()
-                self.suggestions_container.update()
-        except:
-            pass
     
     def on_text_change(self, e):
         """Обработка изменения текста"""
@@ -193,24 +145,19 @@ class AutoCompleteField:
     
     def show_suggestions(self, matches):
         """Отображение списка подсказок"""
-        print(f">>> show_suggestions вызван с {len(matches)} совпадениями")
         self.suggestions_column.controls.clear()
         
         for name, item_id in matches:
-            # Создаём элемент подсказки
-            print(f">>> Создание SuggestionItem для: {name}")
             suggestion_item = SuggestionItem(name, item_id, self.select_suggestion)
             self.suggestions_column.controls.append(suggestion_item.build())
         
         self.suggestions_column.visible = True
         self.suggestions_container.visible = True
-        print(f">>> Подсказки отображены, видимость установлена")
         try:
             if self.suggestions_container.page:
                 self.suggestions_container.update()
-                print(f">>> UI обновлен")
-        except Exception as e:
-            print(f">>> Ошибка обновления UI: {e}")
+        except:
+            pass
     
     def select_suggestion(self, name, item_id):
         """Выбор варианта из списка"""

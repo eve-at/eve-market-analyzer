@@ -30,7 +30,8 @@ def create_tables():
                     access_token TEXT,
                     refresh_token TEXT,
                     token_expiry DATETIME,
-                    broker_fee DECIMAL(5,2) DEFAULT 3.00,
+                    broker_fee_sell DECIMAL(5,2) DEFAULT 3.00,
+                    broker_fee_buy DECIMAL(5,2) DEFAULT 3.00,
                     sales_tax DECIMAL(5,2) DEFAULT 7.50,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -136,7 +137,7 @@ def get_character(character_id):
             cursor = connection.cursor(dictionary=True)
             cursor.execute("""
                 SELECT character_id, character_name, character_portrait_url,
-                       broker_fee, sales_tax, access_token, refresh_token, token_expiry
+                       broker_fee_sell, broker_fee_buy, sales_tax, access_token, refresh_token, token_expiry
                 FROM characters
                 WHERE character_id = %s
             """, (character_id,))
@@ -162,7 +163,7 @@ def save_character(character_data):
         character_data (dict): Dictionary with character information
             Required keys: character_id, character_name
             Optional keys: character_portrait_url, access_token, refresh_token,
-                          token_expiry, broker_fee, sales_tax
+                          token_expiry, broker_fee_sell, broker_fee_buy, sales_tax
     """
     connection = None
     try:
@@ -177,7 +178,7 @@ def save_character(character_data):
             values = [character_data['character_id'], character_data['character_name']]
 
             optional_fields = ['character_portrait_url', 'access_token', 'refresh_token',
-                             'token_expiry', 'broker_fee', 'sales_tax']
+                             'token_expiry', 'broker_fee_sell', 'broker_fee_buy', 'sales_tax']
 
             for field in optional_fields:
                 if field in character_data:

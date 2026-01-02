@@ -22,11 +22,13 @@ class SettingsScreen:
             self.current_character = get_character(character_id)
 
         # Load settings from database or use defaults
-        broker_fee = "3.00"
+        broker_fee_sell = "3.00"
+        broker_fee_buy = "3.00" # for structures it can be 0.5
         sales_tax = "7.50"
 
         if self.current_character:
-            broker_fee = str(self.current_character.get('broker_fee', 3.00))
+            broker_fee_sell = str(self.current_character.get('broker_fee_sell', 3.00))
+            broker_fee_buy = str(self.current_character.get('broker_fee_buy', 3.00))
             sales_tax = str(self.current_character.get('sales_tax', 7.50))
 
         # Load marketlogs directory from database or use provided default
@@ -81,9 +83,16 @@ class SettingsScreen:
         )
 
         # Settings fields
-        self.broker_fee_field = ft.TextField(
-            label="Broker Fee, %",
-            value=broker_fee,
+        self.broker_fee_sell_field = ft.TextField(
+            label="Broker Fee (sell), %",
+            value=broker_fee_sell,
+            width=200,
+            keyboard_type=ft.KeyboardType.NUMBER
+        )
+
+        self.broker_fee_buy_field = ft.TextField(
+            label="Broker Fee (buy), %",
+            value=broker_fee_buy,
             width=200,
             keyboard_type=ft.KeyboardType.NUMBER
         )
@@ -163,7 +172,8 @@ class SettingsScreen:
                 ),
                 ft.Container(height=10),
                 ft.Row([
-                    self.broker_fee_field,
+                    self.broker_fee_sell_field,
+                    self.broker_fee_buy_field,
                     self.sales_tax_field
                 ], spacing=20),
                 ft.Container(height=30),
@@ -241,7 +251,8 @@ class SettingsScreen:
         self.character_avatar.src = "static/img/default_avatar.svg"
 
         # Reset broker fee and sales tax to defaults
-        self.broker_fee_field.value = "3.00"
+        self.broker_fee_sell_field.value = "3.00"
+        self.broker_fee_buy_field.value = "3.00"
         self.sales_tax_field.value = "7.50"
 
         self.status_text.value = "Logged out successfully"
@@ -254,13 +265,15 @@ class SettingsScreen:
         try:
             # Save trading settings to character if logged in
             if self.current_character:
-                broker_fee = float(self.broker_fee_field.value)
+                broker_fee_sell = float(self.broker_fee_sell_field.value)
+                broker_fee_buy = float(self.broker_fee_buy_field.value)
                 sales_tax = float(self.sales_tax_field.value)
 
                 save_character({
                     'character_id': self.current_character['character_id'],
                     'character_name': self.current_character['character_name'],
-                    'broker_fee': broker_fee,
+                    'broker_fee_sell': broker_fee_sell,
+                    'broker_fee_buy': broker_fee_buy,
                     'sales_tax': sales_tax
                 })
 

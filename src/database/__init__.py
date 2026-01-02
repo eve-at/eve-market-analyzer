@@ -1,5 +1,23 @@
 """Database operations"""
 from .data_loader import load_regions_and_items
 from .validator import validate_database, DatabaseStatus
+from .models import (
+    create_tables,
+    get_setting,
+    save_setting,
+    get_character,
+    save_character,
+    get_current_character_id
+)
 
-__all__ = ['load_regions_and_items', 'validate_database', 'DatabaseStatus']
+__all__ = [
+    'load_regions_and_items',
+    'validate_database',
+    'DatabaseStatus',
+    'create_tables',
+    'get_setting',
+    'save_setting',
+    'get_character',
+    'save_character',
+    'get_current_character_id'
+]

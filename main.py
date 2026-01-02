@@ -8,7 +8,7 @@ from src.ui import (
     SettingsScreen
 )
 from src.app import EVEMarketApp
-from src.database import load_regions_and_items
+from src.database import load_regions_and_items, create_tables, get_setting
 from settings import MARKETLOGS_DIR
 
 
@@ -55,6 +55,9 @@ class MainApp:
 
     def on_init_complete(self):
         """Called when initialization is complete and database is ready"""
+        # Create additional tables if they don't exist
+        create_tables()
+
         # Load data from database
         self.regions_data, self.items_data = load_regions_and_items()
 
@@ -185,10 +188,13 @@ class MainApp:
         """Show settings screen"""
         self.page.controls.clear()
 
+        # Load marketlogs_dir from database or use default from settings.py
+        marketlogs_dir = get_setting('marketlogs_dir', MARKETLOGS_DIR)
+
         self.settings_screen = SettingsScreen(
             page=self.page,
             on_back_callback=self.show_main_menu,
-            marketlogs_dir=MARKETLOGS_DIR
+            marketlogs_dir=marketlogs_dir
         )
 
         self.page.add(self.settings_screen.build())

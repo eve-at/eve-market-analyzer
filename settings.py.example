@@ -14,3 +14,8 @@ TYPES_DF = 'https://www.fuzzwork.co.uk/dump/latest/invTypes.csv'
 # Example for Windows: r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
 # Example for Linux: '/home/username/.eve/logs/Marketlogs'
 MARKETLOGS_DIR = r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
+
+# EVE Online App
+EVE_CLIENT_ID = 'app_client_id'
+EVE_CLIENT_SECRET = 'app_client_secret'
+EVE_CALLBACK_URL = 'http://localhost:8888/callback'

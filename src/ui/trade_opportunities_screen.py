@@ -1,7 +1,7 @@
 """Trade opportunities screen UI component"""
 import flet as ft
 from .autocomplete_field import AutoCompleteField
-from src.handlers.trade_opportunities_handler import check_orders_count, update_orders, find_opportunities
+from src.handlers.trade_opportunities_handler import check_orders_count, update_orders, find_opportunities, export_opportunities_to_csv
 import threading
 import importlib
 
@@ -16,10 +16,12 @@ class TradeOpportunitiesScreen:
         self.selected_region_id = None
         self.selected_region_name = None
 
-        # Store opportunities data for sorting
+        # Store opportunities data for sorting and pagination
         self.opportunities_data = []
-        self.sort_column_index = 0
-        self.sort_ascending = True
+        self.sort_column_index = 6  # Default sort by profit (index 6)
+        self.sort_ascending = False  # Descending order
+        self.current_page = 0
+        self.rows_per_page = 50
 
         # Load settings
         import settings
@@ -90,6 +92,17 @@ class TradeOpportunitiesScreen:
             disabled=True,
             style=ft.ButtonStyle(
                 bgcolor=ft.Colors.GREEN,
+                color=ft.Colors.WHITE,
+                padding=ft.Padding(20, 10, 20, 10)
+            )
+        )
+
+        self.export_button = ft.ElevatedButton(
+            "Export to CSV",
+            on_click=self.on_export_csv,
+            visible=False,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.ORANGE,
                 color=ft.Colors.WHITE,
                 padding=ft.Padding(20, 10, 20, 10)
             )
@@ -169,7 +182,8 @@ class TradeOpportunitiesScreen:
                 ], spacing=15, wrap=True),
                 ft.Container(height=10),
                 ft.Row([
-                    self.find_opportunities_button
+                    self.find_opportunities_button,
+                    self.export_button
                 ], spacing=15),
                 ft.Container(height=10),
                 ft.Container(height=5),
@@ -324,15 +338,18 @@ class TradeOpportunitiesScreen:
                 if opportunities is not None and len(opportunities) > 0:
                     self.status_text.value = f"Found {len(opportunities)} opportunities"
                     self.status_text.color = ft.Colors.GREEN
+                    self.export_button.visible = True
                     self.display_opportunities(opportunities)
                 elif opportunities is not None:
                     self.status_text.value = "No opportunities found with current filters"
                     self.status_text.color = ft.Colors.ORANGE
+                    self.export_button.visible = False
                     self.log_container.visible = True
                     self.results_container.visible = False
                 else:
                     self.status_text.value = "Failed to find opportunities"
                     self.status_text.color = ft.Colors.RED
+                    self.export_button.visible = False
 
                 self.page.update()
 
@@ -364,13 +381,29 @@ class TradeOpportunitiesScreen:
         # Sort the data
         self.opportunities_data.sort(key=sort_keys[column_index], reverse=not self.sort_ascending)
 
-        # Redisplay the table
-        self.display_opportunities(self.opportunities_data)
+        # Reset to first page and redisplay
+        self.current_page = 0
+        self.update_table_display()
 
-    def display_opportunities(self, opportunities):
-        """Display opportunities in a sortable DataTable"""
-        # Store opportunities data for sorting
-        self.opportunities_data = opportunities
+    def change_page(self, delta):
+        """Change current page"""
+        new_page = self.current_page + delta
+        total_pages = (len(self.opportunities_data) - 1) // self.rows_per_page + 1
+
+        if 0 <= new_page < total_pages:
+            self.current_page = new_page
+            self.update_table_display()
+
+    def update_table_display(self):
+        """Update table display with current page"""
+        if not self.opportunities_data:
+            return
+
+        # Calculate pagination
+        start_idx = self.current_page * self.rows_per_page
+        end_idx = min(start_idx + self.rows_per_page, len(self.opportunities_data))
+        page_data = self.opportunities_data[start_idx:end_idx]
+        total_pages = (len(self.opportunities_data) - 1) // self.rows_per_page + 1
 
         # Create DataTable columns with sort callbacks
         columns = [
@@ -411,7 +444,7 @@ class TradeOpportunitiesScreen:
 
         # Create DataTable rows
         rows = []
-        for opp in opportunities:
+        for opp in page_data:
             rows.append(
                 ft.DataRow(
                     cells=[
@@ -421,7 +454,7 @@ class TradeOpportunitiesScreen:
                         ft.DataCell(ft.Text(str(opp['sell_orders_count']))),
                         ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.2f}")),
                         ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.2f}")),
-                        ft.DataCell(ft.Text(f"{float(opp['profit']):.2f}%")),
+                        ft.DataCell(ft.Text(f"{int(opp['profit'])}%")),
                     ]
                 )
             )
@@ -435,16 +468,34 @@ class TradeOpportunitiesScreen:
             vertical_lines=ft.BorderSide(1, ft.Colors.GREY_300),
             horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
             heading_row_color=ft.Colors.GREY_200,
-            heading_row_height=50,
-            data_row_min_height=40,
+            heading_row_height=30,
+            data_row_min_height=30,
             sort_column_index=self.sort_column_index,
             sort_ascending=self.sort_ascending,
+        )
+
+        # Pagination controls
+        prev_button = ft.IconButton(
+            icon=ft.Icons.ARROW_BACK,
+            on_click=lambda _: self.change_page(-1),
+            disabled=self.current_page == 0
+        )
+
+        next_button = ft.IconButton(
+            icon=ft.Icons.ARROW_FORWARD,
+            on_click=lambda _: self.change_page(1),
+            disabled=self.current_page >= total_pages - 1
+        )
+
+        page_info = ft.Text(
+            f"Page {self.current_page + 1} of {total_pages} | Showing {start_idx + 1}-{end_idx} of {len(self.opportunities_data)}",
+            size=12
         )
 
         # Update results container with scrollable table
         self.results_container.content = ft.Column([
             ft.Text(
-                f"Trade Opportunities ({len(opportunities)} items)",
+                f"Trade Opportunities ({len(self.opportunities_data)} items)",
                 size=18,
                 weight=ft.FontWeight.BOLD
             ),
@@ -454,12 +505,92 @@ class TradeOpportunitiesScreen:
                 border=ft.border.all(1, ft.Colors.GREY_400),
                 border_radius=5,
                 padding=10,
-            )
+            ),
+            ft.Container(height=10),
+            ft.Row([
+                prev_button,
+                page_info,
+                next_button
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
         ], scroll=ft.ScrollMode.AUTO)
 
         # Hide log and show results
         self.log_container.visible = False
         self.results_container.visible = True
+        self.page.update()
+
+    def on_export_csv(self, _):
+        """Handle export to CSV button click"""
+        if not self.selected_region_id:
+            return
+
+        # Show progress log
+        self.log_column.controls.clear()
+        self.log_container.visible = True
+        self.results_container.visible = False
+
+        # Disable buttons during export
+        self.export_button.disabled = True
+        self.find_opportunities_button.disabled = True
+        self.update_orders_button.disabled = True
+
+        self.status_text.value = "Exporting to CSV..."
+        self.status_text.color = ft.Colors.BLUE
+
+        self.page.update()
+
+        # Run export in separate thread
+        def export_thread():
+            filepath = export_opportunities_to_csv(
+                self.selected_region_id,
+                callback=self.log_progress
+            )
+
+            # Update UI after completion
+            async def update_after_export():
+                self.export_button.disabled = False
+                self.find_opportunities_button.disabled = False
+                self.update_orders_button.disabled = False
+
+                if filepath:
+                    self.status_text.value = f"Successfully exported to CSV"
+                    self.status_text.color = ft.Colors.GREEN
+                    # Show the results table again
+                    self.log_container.visible = False
+                    self.results_container.visible = True
+                else:
+                    self.status_text.value = "Failed to export to CSV"
+                    self.status_text.color = ft.Colors.RED
+
+                self.page.update()
+
+            self.page.run_task(update_after_export)
+
+        thread = threading.Thread(target=export_thread, daemon=True)
+        thread.start()
+
+    def display_opportunities(self, opportunities):
+        """Display opportunities in a sortable DataTable"""
+        # Store opportunities data
+        self.opportunities_data = opportunities
+
+        # Sort by default column (profit) in descending order
+        sort_keys = [
+            lambda x: x['type_id'],
+            lambda x: x['typeName'].lower(),
+            lambda x: x['buy_orders_count'],
+            lambda x: x['sell_orders_count'],
+            lambda x: float(x['min_sell_price']),
+            lambda x: float(x['max_buy_price']),
+            lambda x: float(x['profit']),
+        ]
+        self.opportunities_data.sort(key=sort_keys[self.sort_column_index], reverse=not self.sort_ascending)
+
+        # Reset to first page
+        self.current_page = 0
+
+        # Display the table
+        self.update_table_display()
 
     def build(self):
         """Build and return the UI container"""

@@ -334,7 +334,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                 MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END) AS max_buy_price,
                 ROUND((MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) -
                        MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END)) /
-                       MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) * 100, 2) AS profit,
+                       MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) * 100) AS profit,
                 NULL as qty_avg
             FROM {orders_table} o
             JOIN types t ON t.typeID = o.type_id
@@ -380,6 +380,109 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         log(f"Error: {e}")
         if connection:
             connection.rollback()
+        return None
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+            log("MySQL connection closed")
+
+
+def export_opportunities_to_csv(region_id, callback=None):
+    """
+    Export opportunities table to CSV file
+
+    Parameters:
+    region_id - EVE Online region ID
+    callback - optional callback function for progress messages
+
+    Returns:
+    str - Path to exported CSV file, or None if failed
+    """
+
+    def log(message):
+        """Helper to log message to console and callback"""
+        print(message)
+        if callback:
+            callback(message)
+
+    settings = _get_settings()
+    connection = None
+
+    try:
+        log("="*60)
+        log(f"Exporting opportunities for region {region_id} to CSV")
+        log("="*60)
+        log("")
+
+        # Connect to database
+        log("Connecting to MySQL database...")
+        connection = mysql.connector.connect(**settings.DB_CONFIG)
+        cursor = connection.cursor(dictionary=True)
+        log("Successfully connected to MySQL")
+        log("")
+
+        opportunities_table = f"opportunities_{region_id}"
+
+        # Check if opportunities table exists
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+        """, (settings.DB_CONFIG['database'], opportunities_table))
+
+        if cursor.fetchone()['COUNT(*)'] == 0:
+            log(f"Error: Opportunities table {opportunities_table} doesn't exist")
+            log("Please run 'Find Opportunities' first")
+            return None
+
+        # Fetch data
+        log(f"Fetching data from {opportunities_table}...")
+        cursor.execute(f"SELECT * FROM {opportunities_table}")
+        opportunities = cursor.fetchall()
+
+        if not opportunities:
+            log("No data to export")
+            return None
+
+        log(f"Found {len(opportunities)} opportunities")
+        log("")
+
+        # Export to CSV
+        import csv
+        import os
+        from datetime import datetime
+
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"opportunities_{region_id}_{timestamp}.csv"
+
+        # Get the current working directory
+        filepath = os.path.join(os.getcwd(), filename)
+
+        log(f"Writing to {filepath}...")
+
+        with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['type_id', 'typeName', 'buy_orders_count', 'sell_orders_count',
+                         'min_sell_price', 'max_buy_price', 'profit', 'qty_avg']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for opp in opportunities:
+                writer.writerow(opp)
+
+        log("")
+        log("="*60)
+        log(f"Successfully exported to {filename}")
+        log("="*60)
+
+        return filepath
+
+    except Error as e:
+        log(f"Database error: {e}")
+        return None
+    except Exception as e:
+        log(f"Error: {e}")
         return None
     finally:
         if connection and connection.is_connected():

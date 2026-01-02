@@ -1,88 +1,120 @@
+"""Static data import handler"""
 import pandas as pd
 import mysql.connector
 from mysql.connector import Error
 import requests
-import os
 from pathlib import Path
-from settings import DB_CONFIG, REGIONS_DF, TYPES_DF
+import importlib
 
 
-def download_csv(url, filename):
+def _get_settings():
+    """Reload and get settings from settings module"""
+    import settings
+    importlib.reload(settings)
+    return settings
+
+
+def download_csv(url, filename, callback=None):
     """
     Download CSV file from URL
-    
+
     Parameters:
     url - URL to download from
     filename - local filename to save
-    
+    callback - optional callback function for progress messages
+
     Returns:
     Path to downloaded file
     """
-    print(f"Downloading {filename} from {url}...")
-    
+    msg = f"Downloading {filename} from {url}..."
+    print(msg)
+    if callback:
+        callback(msg)
+
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-        
+
         # Create data directory if it doesn't exist
         data_dir = Path('data')
         data_dir.mkdir(exist_ok=True)
-        
+
         # Save file
         filepath = data_dir / filename
         with open(filepath, 'wb') as f:
             f.write(response.content)
-        
-        print(f"Successfully downloaded {filename}")
+
+        msg = f"Successfully downloaded {filename}"
+        print(msg)
+        if callback:
+            callback(msg)
         return filepath
-        
+
     except requests.exceptions.RequestException as e:
-        print(f"Error downloading {filename}: {e}")
+        msg = f"Error downloading {filename}: {e}"
+        print(msg)
+        if callback:
+            callback(msg)
         raise
 
 
-def import_static_data():
+def import_static_data(callback=None):
     """
     Download and import static data (regions and types) into MySQL database
+
+    Parameters:
+    callback - optional callback function to receive progress messages
+
+    Returns:
+    bool - True if successful, False otherwise
     """
-    
-    print("="*60)
-    print("EVE Online Static Data Import")
-    print("="*60)
-    print()
-    
+
+    def log(message):
+        """Helper to log message to console and callback"""
+        print(message)
+        if callback:
+            callback(message)
+
+    # Reload settings to get fresh configuration
+    settings = _get_settings()
+
+    log("="*60)
+    log("EVE Online Static Data Import")
+    log("="*60)
+    log("")
+
     # Download CSV files
     try:
-        regions_file = download_csv(REGIONS_DF, 'mapRegions.csv')
-        types_file = download_csv(TYPES_DF, 'invTypes.csv')
+        regions_file = download_csv(settings.REGIONS_DF, 'mapRegions.csv', callback)
+        types_file = download_csv(settings.TYPES_DF, 'invTypes.csv', callback)
     except Exception as e:
-        print(f"\nFailed to download files: {e}")
+        log(f"\nFailed to download files: {e}")
         return False
-    
-    print()
-    
+
+    log("")
+
     # Connect to database and import data
     connection = None
     try:
         # Connect to MySQL
-        print("Connecting to MySQL database...")
-        connection = mysql.connector.connect(**DB_CONFIG)
-        
+        log("Connecting to MySQL database...")
+        connection = mysql.connector.connect(**settings.DB_CONFIG)
+
         if connection.is_connected():
             cursor = connection.cursor()
-            print("Successfully connected to MySQL")
-            print()
-            
+            log("Successfully connected to MySQL")
+            log("")
+
             # Read CSV files
-            print("Reading CSV files...")
+            log("Reading CSV files...")
             regions_df = pd.read_csv(regions_file)
             types_df = pd.read_csv(types_file)
-            print(f"Loaded {len(regions_df)} regions")
-            print(f"Loaded {len(types_df)} item types")
-            print()
-            
+            log(f"Loaded {len(regions_df)} regions")
+            log(f"Loaded {len(types_df)} item types")
+            log("")
+
             # Create regions table
-            print("Creating regions table...")
+            log("Creating regions table...")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS regions (
                     regionID BIGINT PRIMARY KEY,
@@ -101,10 +133,10 @@ def import_static_data():
                     radius VARCHAR(50)
                 )
             """)
-            print("Table 'regions' created or already exists")
-            
+            log("Table 'regions' created or already exists")
+
             # Create types table
-            print("Creating types table...")
+            log("Creating types table...")
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS types (
                     typeID INT PRIMARY KEY,
@@ -124,18 +156,18 @@ def import_static_data():
                     graphicID INT
                 )
             """)
-            print("Table 'types' created or already exists")
-            print()
-            
+            log("Table 'types' created or already exists")
+            log("")
+
             # Clear existing data
-            print("Clearing existing data...")
+            log("Clearing existing data...")
             cursor.execute("TRUNCATE TABLE regions")
             cursor.execute("TRUNCATE TABLE types")
-            print("Tables cleared")
-            print()
-            
+            log("Tables cleared")
+            log("")
+
             # Import regions
-            print("Importing regions data...")
+            log("Importing regions data...")
             region_count = 0
             for index, row in regions_df.iterrows():
                 values = tuple(None if pd.isna(val) else val for val in row)
@@ -144,15 +176,15 @@ def import_static_data():
                 sql = f"INSERT INTO regions ({columns}) VALUES ({placeholders})"
                 cursor.execute(sql, values)
                 region_count += 1
-                
+
                 if region_count % 10 == 0:
-                    print(f"  Imported {region_count}/{len(regions_df)} regions...")
-            
-            print(f"Successfully imported {region_count} regions")
-            print()
-            
+                    log(f"  Imported {region_count}/{len(regions_df)} regions...")
+
+            log(f"Successfully imported {region_count} regions")
+            log("")
+
             # Import types
-            print("Importing types data...")
+            log("Importing types data...")
             type_count = 0
             for index, row in types_df.iterrows():
                 values = tuple(None if pd.isna(val) else val for val in row)
@@ -161,40 +193,40 @@ def import_static_data():
                 sql = f"INSERT INTO types ({columns}) VALUES ({placeholders})"
                 cursor.execute(sql, values)
                 type_count += 1
-                
+
                 if type_count % 1000 == 0:
-                    print(f"  Imported {type_count}/{len(types_df)} types...")
-            
-            print(f"Successfully imported {type_count} item types")
-            print()
-            
+                    log(f"  Imported {type_count}/{len(types_df)} types...")
+
+            log(f"Successfully imported {type_count} item types")
+            log("")
+
             # Commit transaction
             connection.commit()
-            print("All changes committed to database")
-            print()
-            
-            print("="*60)
-            print("Import completed successfully!")
-            print("="*60)
+            log("All changes committed to database")
+            log("")
+
+            log("="*60)
+            log("Import completed successfully!")
+            log("="*60)
             return True
-            
+
     except Error as e:
-        print(f"\n✗ MySQL error: {e}")
+        log(f"\n✗ MySQL error: {e}")
         if connection:
             connection.rollback()
         return False
-        
+
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        log(f"\n✗ Error: {e}")
         if connection:
             connection.rollback()
         return False
-        
+
     finally:
         if connection and connection.is_connected():
             cursor.close()
             connection.close()
-            print("\nMySQL connection closed")
+            log("\nMySQL connection closed")
 
 
 if __name__ == "__main__":

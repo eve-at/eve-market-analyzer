@@ -96,27 +96,19 @@ DB_CONFIG = {
 MARKETLOGS_DIR = r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
 ```
 
-### 5. Import Static Data
-
-Run the import script to download and populate the database with regions and item types:
+### 5. Run Application
 
 ```bash
-python import_static_data.py
+python main.py
 ```
 
-This script will:
-- Download the latest region data from Fuzzwork
-- Download the latest item types data from Fuzzwork
-- Create necessary database tables (`regions` and `types`)
-- Import all data into your MySQL database
+On first run, the application will:
+- Check database connection
+- Check if static data (regions and items) is present
+- If data is missing, offer to import it with a button
+- Show import progress in real-time
 
-**Note:** You should periodically re-run this script to update static data, especially after major EVE Online patches or updates.
-
-### 6. Run Application
-
-```bash
-python eve_market_history.py
-```
+**Note:** The import process is now integrated into the application. You no longer need to run a separate import script!
 
 ## Usage
 
@@ -135,11 +127,10 @@ If you configure `MARKETLOGS_DIR` correctly, the application will automatically:
 
 ## Updating Static Data
 
-EVE Online frequently adds new items, regions, and makes balance changes. To keep your data current:
+EVE Online frequently adds new items, regions, and makes balance changes. To update your data:
 
-```bash
-python import_static_data.py
-```
+1. Delete the existing data from database tables (or use database management tool)
+2. Restart the application - it will detect empty tables and offer to re-import
 
 **When to update:**
 - After major EVE Online expansions
@@ -150,14 +141,25 @@ python import_static_data.py
 ## Project Structure
 
 ```
-eve-market-history/
-├── eve_market_history.py    # Main application
-├── import_static_data.py    # Static data import script
-├── settings.py.example      # Example configuration file
-├── settings.py              # Your configuration (not in git)
-├── requirements.txt         # Python dependencies
-├── docker-compose.yml       # Docker MySQL setup (optional)
-└── README.md               # This file
+historical_prices/
+├── main.py                         # Main entry point
+├── settings.py.example            # Example configuration file
+├── settings.py                    # Your configuration (not in git)
+├── requirements.txt               # Python dependencies
+├── docker-compose.yml             # Docker MySQL setup (optional)
+├── data/                          # Downloaded CSV files (auto-created)
+└── src/                           # Source code package
+    ├── app.py                     # Main application class
+    ├── handlers/                  # Event handlers
+    │   ├── market_log_handler.py  # File system monitoring
+    │   └── import_static_data.py  # Static data import functionality
+    ├── ui/                        # UI components
+    │   ├── init_screen.py         # Initialization/setup screen
+    │   ├── autocomplete_field.py  # Autocomplete input field
+    │   └── suggestion_item.py     # Suggestion list item
+    └── database/                  # Database operations
+        ├── validator.py           # Database validation
+        └── data_loader.py         # Data loading utilities
 ```
 
 ## Troubleshooting

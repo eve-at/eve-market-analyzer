@@ -1,7 +1,14 @@
 """Database data loading operations"""
 import mysql.connector
 from mysql.connector import Error
-from settings import DB_CONFIG
+import importlib
+
+
+def _get_db_config():
+    """Reload and get DB_CONFIG from settings module"""
+    import settings
+    importlib.reload(settings)
+    return settings.DB_CONFIG
 
 
 def load_regions_and_items():
@@ -16,7 +23,9 @@ def load_regions_and_items():
     items_data = {}
 
     try:
-        connection = mysql.connector.connect(**DB_CONFIG)
+        # Reload settings to get fresh DB_CONFIG
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
 
         if connection.is_connected():
             cursor = connection.cursor()

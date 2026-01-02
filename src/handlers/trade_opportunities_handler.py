@@ -229,6 +229,165 @@ def update_orders(region_id, callback=None):
             log("MySQL connection closed")
 
 
+def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_percent,
+                      max_profit_percent, min_daily_quantity, callback=None):
+    """
+    Find trade opportunities based on filters and save to database
+
+    Parameters:
+    region_id - EVE Online region ID
+    min_sell_price - Minimum sell price filter
+    max_buy_price - Maximum buy price filter
+    min_profit_percent - Minimum profit percentage
+    max_profit_percent - Maximum profit percentage
+    min_daily_quantity - Minimum daily quantity
+    callback - optional callback function for progress messages
+
+    Returns:
+    list - List of opportunities as dictionaries, or None if failed
+    """
+
+    def log(message):
+        """Helper to log message to console and callback"""
+        print(message)
+        if callback:
+            callback(message)
+
+    settings = _get_settings()
+    connection = None
+
+    try:
+        log("="*60)
+        log(f"Finding trade opportunities for region {region_id}")
+        log("="*60)
+        log("")
+
+        # Connect to database
+        log("Connecting to MySQL database...")
+        connection = mysql.connector.connect(**settings.DB_CONFIG)
+        cursor = connection.cursor(dictionary=True)
+        log("Successfully connected to MySQL")
+        log("")
+
+        orders_table = f"orders_{region_id}"
+        opportunities_table = f"opportunities_{region_id}"
+
+        # Check if orders table exists
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = %s AND table_name = %s
+        """, (settings.DB_CONFIG['database'], orders_table))
+
+        if cursor.fetchone()['COUNT(*)'] == 0:
+            log(f"Error: Orders table {orders_table} doesn't exist")
+            log("Please click 'Update Orders' first")
+            return None
+
+        # Check if orders table has data
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM {orders_table}")
+        orders_count = cursor.fetchone()['cnt']
+
+        if orders_count == 0:
+            log(f"Error: Orders table {orders_table} is empty")
+            log("Please click 'Update Orders' first")
+            return None
+
+        log(f"Found {orders_count} orders in table")
+        log("")
+
+        # Create opportunities table if not exists
+        log(f"Creating table {opportunities_table} if not exists...")
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {opportunities_table} (
+                type_id INT PRIMARY KEY,
+                typeName VARCHAR(255),
+                buy_orders_count INT,
+                sell_orders_count INT,
+                min_sell_price DECIMAL(20, 2),
+                max_buy_price DECIMAL(20, 2),
+                profit DECIMAL(10, 2),
+                qty_avg INT
+            )
+        """)
+        log(f"Table {opportunities_table} ready")
+        log("")
+
+        # Clear opportunities table
+        log(f"Clearing existing data from {opportunities_table}...")
+        cursor.execute(f"TRUNCATE TABLE {opportunities_table}")
+        log("Table cleared")
+        log("")
+
+        # Execute the main query
+        log("Executing opportunities query...")
+        query = f"""
+            INSERT INTO {opportunities_table}
+            (type_id, typeName, buy_orders_count, sell_orders_count,
+             min_sell_price, max_buy_price, profit, qty_avg)
+            SELECT
+                o.type_id,
+                t.typeName,
+                COUNT(CASE WHEN o.is_buy_order = 1 THEN 1 END) AS buy_orders_count,
+                COUNT(CASE WHEN o.is_buy_order = 0 THEN 1 END) AS sell_orders_count,
+                MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) AS min_sell_price,
+                MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END) AS max_buy_price,
+                ROUND((MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) -
+                       MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END)) /
+                       MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) * 100, 2) AS profit,
+                NULL as qty_avg
+            FROM {orders_table} o
+            JOIN types t ON t.typeID = o.type_id
+            WHERE o.type_id IN (
+                SELECT
+                    type_id
+                FROM {orders_table}
+                WHERE duration < 365
+                    AND is_buy_order = 0
+                GROUP BY type_id
+                HAVING MIN(CASE WHEN is_buy_order = 0 THEN price END) > %s
+                    AND MIN(CASE WHEN is_buy_order = 0 THEN price END) < %s
+            )
+            GROUP BY o.type_id, t.typeName
+            HAVING profit > %s AND profit < %s
+            ORDER BY o.type_id
+        """
+
+        cursor.execute(query, (min_sell_price, max_buy_price, min_profit_percent, max_profit_percent))
+        connection.commit()
+
+        log("Query executed successfully")
+        log("")
+
+        # Fetch results
+        log("Fetching opportunities from database...")
+        cursor.execute(f"SELECT * FROM {opportunities_table}")
+        opportunities = cursor.fetchall()
+
+        log("")
+        log("="*60)
+        log(f"Found {len(opportunities)} trade opportunities")
+        log("="*60)
+
+        return opportunities
+
+    except Error as e:
+        log(f"Database error: {e}")
+        if connection:
+            connection.rollback()
+        return None
+    except Exception as e:
+        log(f"Error: {e}")
+        if connection:
+            connection.rollback()
+        return None
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+            log("MySQL connection closed")
+
+
 if __name__ == "__main__":
     # Test with The Forge region (ID: 10000002)
     region_id = 10000002

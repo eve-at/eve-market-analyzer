@@ -19,3 +19,4 @@ MARKETLOGS_DIR = r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
 EVE_CLIENT_ID = 'app_client_id'
 EVE_CLIENT_SECRET = 'app_client_secret'
 EVE_CALLBACK_URL = 'http://localhost:8888/callback'
+EVE_SCOPES = "esi-markets.read_character_orders.v1"

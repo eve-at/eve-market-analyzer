@@ -1,6 +1,6 @@
 """Settings screen UI component"""
 import flet as ft
-from src.auth import EVESSO
+from src.auth.eve_sso import EVESSO
 from src.database.models import (
     get_character, save_character, get_current_character_id,
     save_setting, get_setting
@@ -60,17 +60,17 @@ class SettingsScreen:
                 ], spacing=2)
             ]
 
-        # EVE Online login button
-        self.eve_login_button = ft.ElevatedButton(
-            "Login with EVE Online",
-            icon=ft.Icons.LOGIN,
+        # EVE Online login button (using official SSO button image)
+        self.eve_login_button = ft.Container(
+            content=ft.Image(
+                src="static/img/ssologin.png",
+                width=270,
+                fit=ft.BoxFit.CONTAIN
+            ),
             on_click=self.on_eve_login,
             visible=not bool(self.current_character),
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.ORANGE,
-                color=ft.Colors.WHITE,
-                padding=ft.Padding(20, 10, 20, 10)
-            )
+            ink=True,
+            border_radius=5
         )
 
         # Logout button

@@ -33,6 +33,7 @@ class EVESSO:
         settings = _get_settings()
         self.client_id = settings.EVE_CLIENT_ID
         self.client_secret = settings.EVE_CLIENT_SECRET
+        self.scopes = settings.EVE_SCOPES
 
         self.state = None
         self.auth_code = None
@@ -58,7 +59,7 @@ class EVESSO:
             'redirect_uri': self.CALLBACK_URL,
             'client_id': self.client_id,
             'state': self.state,
-            'scope': 'publicData'  # Minimal scope for character info
+            'scope': self.scopes  # Use scopes from settings.py
         }
 
         auth_url = f"{self.AUTHORIZE_URL}?{urlencode(params)}"

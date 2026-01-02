@@ -5,7 +5,8 @@ from src.ui import (
     WelcomeScreen,
     MainMenu,
     TradeOpportunitiesScreen,
-    SettingsScreen
+    SettingsScreen,
+    AppBar
 )
 from src.app import EVEMarketApp
 from src.database import load_regions_and_items, create_tables, get_setting
@@ -30,6 +31,9 @@ class MainApp:
         self.trade_opportunities_screen = None
         self.settings_screen = None
         self.update_data_screen = None
+
+        # App bar
+        self.app_bar = None
 
         # Data
         self.regions_data = {}
@@ -80,12 +84,21 @@ class MainApp:
         """Show main menu"""
         self.page.controls.clear()
 
+        # Create app bar if not exists
+        if not self.app_bar:
+            self.app_bar = AppBar(self.page, on_settings_click=self.show_settings)
+
         self.main_menu = MainMenu(
             page=self.page,
             on_menu_select=self.on_menu_select
         )
 
-        self.page.add(self.main_menu.build())
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.main_menu.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
         self.page.update()
 
     def on_menu_select(self, menu_key):
@@ -129,7 +142,12 @@ class MainApp:
             expand=True
         )
 
-        self.page.add(container)
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                container
+            ], spacing=0, expand=True)
+        )
         self.page.update()
 
     def on_update_complete(self):
@@ -158,7 +176,13 @@ class MainApp:
             expand=False
         )
 
-        self.page.add(container)
+        # Add app bar and container
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                container
+            ], spacing=0, expand=False)
+        )
 
         # Initialize market app (it will add its own content to the page)
         if self.market_app:
@@ -181,7 +205,12 @@ class MainApp:
             on_back_callback=self.show_main_menu
         )
 
-        self.page.add(self.trade_opportunities_screen.build())
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.trade_opportunities_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
         self.page.update()
 
     def show_settings(self):
@@ -193,12 +222,23 @@ class MainApp:
 
         self.settings_screen = SettingsScreen(
             page=self.page,
-            on_back_callback=self.show_main_menu,
+            on_back_callback=self.on_settings_back,
             marketlogs_dir=marketlogs_dir
         )
 
-        self.page.add(self.settings_screen.build())
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.settings_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
         self.page.update()
+
+    def on_settings_back(self):
+        """Handle back from settings and refresh app bar"""
+        # Refresh app bar to update character info
+        self.app_bar.refresh()
+        self.show_main_menu()
 
 
 def main(page: ft.Page):

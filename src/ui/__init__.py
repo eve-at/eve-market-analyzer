@@ -6,6 +6,7 @@ from .welcome_screen import WelcomeScreen
 from .main_menu import MainMenu
 from .trade_opportunities_screen import TradeOpportunitiesScreen
 from .settings_screen import SettingsScreen
+from .app_bar import AppBar
 
 __all__ = [
     'AutoCompleteField',
@@ -14,5 +15,6 @@ __all__ = [
     'WelcomeScreen',
     'MainMenu',
     'TradeOpportunitiesScreen',
-    'SettingsScreen'
+    'SettingsScreen',
+    'AppBar'
 ]

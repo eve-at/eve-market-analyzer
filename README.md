@@ -1,15 +1,17 @@
-# EVE Online Market History Viewer
+# EVE Online Market Helper
 
-A desktop application for viewing historical market data from EVE Online using the ESI API.
+A comprehensive desktop application for EVE Online traders featuring market analysis, historical data viewing, and trade opportunity finding.
 
 ## Features
 
-- ✅ Real-time market history data from EVE Online ESI API
-- ✅ Autocomplete search for regions and items
-- ✅ Data loaded from MySQL database
-- ✅ Automatic import of static data from Fuzzwork
-- ✅ File monitoring for automatic market log detection
-- ✅ Clean and intuitive UI built with Flet
+- ✅ **Menu-driven interface** with multiple tools for traders
+- ✅ **Market History Viewer** - Real-time historical data from EVE Online ESI API
+- ✅ **Trade Opportunities Finder** - Search for profitable trades (coming soon)
+- ✅ **Integrated Settings** - Customize broker fees, taxes, and paths
+- ✅ **Automatic Data Import** - Built-in static data management from Fuzzwork
+- ✅ **Smart Autocomplete** - Fast region and item search
+- ✅ **File Monitoring** - Automatic market log detection
+- ✅ **Clean UI** built with Flet framework
 
 ## Prerequisites
 

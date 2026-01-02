@@ -1,6 +1,7 @@
 import flet as ft
 import requests
-import csv
+import mysql.connector
+from mysql.connector import Error
 import os
 import re
 import threading
@@ -9,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from settings import DB_CONFIG, MARKETLOGS_DIR
 
 
 class MarketLogHandler(FileSystemEventHandler):
@@ -166,7 +168,7 @@ class AutoCompleteField:
             if query_lower in name.lower():
                 matches.append((name, item_id))
         
-        # Сортировка: сначала те, что начинаются с запроса
+        # Sort: first those that start with query
         matches.sort(key=lambda x: (not x[0].lower().startswith(query_lower), x[0]))
         
         return matches
@@ -217,42 +219,186 @@ class AutoCompleteField:
                 
                 # Notify about validation change
                 if self.on_validation_change:
-                    self.on_validation_change(True)
+                    self.on_validation_change()
         except:
             pass
         
-        # Call callback
+        # Callback
         if self.on_select_callback:
             self.on_select_callback(name, item_id)
+    
+    def validate(self):
+        """Validate that element is selected from list"""
+        if self.text_field.value.strip() and self.selected_id is None:
+            self.text_field.border_color = ft.Colors.RED
+            self.text_field.error_text = "Select from list"
+            self.is_valid = False
+            self.id_label.value = "Not selected from list"
+            self.id_label.color = ft.Colors.RED
+            self.id_label.visible = True
+            try:
+                if self.text_field.page:
+                    self.text_field.update()
+                    self.id_label.update()
+            except:
+                pass
+            return False
+        elif not self.text_field.value.strip():
+            self.text_field.border_color = ft.Colors.RED
+            self.text_field.error_text = "Field cannot be empty"
+            self.is_valid = False
+            try:
+                if self.text_field.page:
+                    self.text_field.update()
+            except:
+                pass
+            return False
+        return True
     
     def get_selected_id(self):
         """Get selected ID"""
         return self.selected_id
     
-    def get_value(self):
-        """Get current field value"""
-        return self.text_field.value
+    def get_selected_name(self):
+        """Get selected name"""
+        return self.selected_name
 
 
 class EVEMarketApp:
+    """Main application class"""
     def __init__(self, page: ft.Page):
         self.page = page
-        self.page.title = "EVE Online - Market History"
+        self.page.title = "EVE Online Market History"
+        self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.window.width = 1000
-        self.page.window.height = 700
+        self.page.window.height = 800
         
-        # Load static data
-        self.regions_data = {}  # {name: id}
-        self.items_data = {}    # {name: id}
-        self.load_static_data()
+        # Flag to prevent parallel processing
+        self.is_processing = False
         
-        # UI elements
-        self.status_text = ft.Text("Enter region and item name", size=14)
-        self.data_table = None
-        self.data_container = ft.Column(expand=True)
+        # Initialize file monitoring
+        self.marketlogs_dir = Path(MARKETLOGS_DIR)
+        self.observer = None
         
-        # Loader (loading indicator)
-        self.loader = ft.ProgressRing(visible=False, width=50, height=50)
+        # Load data from database
+        self.regions_data = {}  # {regionName: regionID}
+        self.items_data = {}    # {typeName: typeID}
+        
+        self.load_data_from_db()
+        
+        # Create UI
+        self.create_ui()
+        
+        # Start file monitoring
+        self.start_file_monitoring()
+    
+    def load_data_from_db(self):
+        """Load regions and types data from MySQL database"""
+        try:
+            connection = mysql.connector.connect(**DB_CONFIG)
+            
+            if connection.is_connected():
+                cursor = connection.cursor()
+                
+                # Load regions
+                cursor.execute("SELECT regionName, regionID FROM regions ORDER BY regionName")
+                regions = cursor.fetchall()
+                self.regions_data = {name: region_id for name, region_id in regions}
+                print(f"Loaded {len(self.regions_data)} regions from database")
+                
+                # Load types (only published items)
+                cursor.execute("SELECT typeName, typeID FROM types WHERE published = 1 ORDER BY typeName")
+                types = cursor.fetchall()
+                self.items_data = {name: type_id for name, type_id in types}
+                print(f"Loaded {len(self.items_data)} items from database")
+                
+        except Error as e:
+            print(f"Database error: {e}")
+            # Set empty dicts if database error
+            self.regions_data = {}
+            self.items_data = {}
+        finally:
+            if connection and connection.is_connected():
+                cursor.close()
+                connection.close()
+    
+    def create_ui(self):
+        """Create user interface"""
+        # Title
+        title = ft.Text(
+            "EVE Online Market History",
+            size=24,
+            weight=ft.FontWeight.BOLD
+        )
+        
+        # Info text
+        info_text = ft.Text(
+            "Select region and item to view market history",
+            size=14,
+            color=ft.Colors.GREY_700
+        )
+        
+        # Callback to check both fields
+        def check_fields():
+            if self.region_field.is_valid and self.item_field.is_valid:
+                self.get_button.disabled = False
+            else:
+                self.get_button.disabled = True
+            try:
+                if self.get_button.page:
+                    self.get_button.update()
+            except:
+                pass
+        
+        # Fields with autocomplete
+        self.region_field = AutoCompleteField(
+            label="Region",
+            hint_text="Start typing region name...",
+            default_value="",
+            data_dict=self.regions_data,
+            on_select_callback=lambda name, id: print(f"Selected region: {name} (ID: {id})"),
+            on_validation_change=check_fields
+        )
+        
+        self.item_field = AutoCompleteField(
+            label="Item",
+            hint_text="Start typing item name...",
+            default_value="",
+            data_dict=self.items_data,
+            on_select_callback=lambda name, id: print(f"Selected item: {name} (ID: {id})"),
+            on_validation_change=check_fields
+        )
+        
+        # Button to load data
+        self.get_button = ft.Button(
+            "Get History",
+            on_click=self.load_market_data,
+            disabled=True,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE,
+                color=ft.Colors.WHITE,
+                padding=ft.Padding(20, 10, 20, 10)
+            )
+        )
+        
+        # Status text
+        self.status_text = ft.Text("", size=14)
+        
+        # Column for table data
+        self.data_column = ft.Column([
+            ft.Text("Select region and item, then click 'Get History'", 
+                   size=14, 
+                   color=ft.Colors.GREY_600)
+        ])
+        
+        # Container for table
+        self.data_container = ft.Container(
+            content=self.data_column,
+            expand=True
+        )
+        
+        # Loader
+        self.loader = ft.ProgressRing(width=50, height=50)
         self.loader_container = ft.Container(
             content=ft.Column([
                 self.loader,
@@ -263,130 +409,7 @@ class EVEMarketApp:
             expand=True
         )
         
-        # Get button
-        self.get_button = ft.Button(
-            "Get",
-            icon=ft.Icons.DOWNLOAD,
-            on_click=self.load_market_data,
-            style=ft.ButtonStyle(
-                color=ft.Colors.WHITE,
-                bgcolor=ft.Colors.BLUE_700
-            )
-        )
-        
-        # Autocomplete fields
-        self.region_field = AutoCompleteField(
-            label="Region",
-            hint_text="The Forge",
-            default_value="The Forge",
-            data_dict=self.regions_data,
-            on_select_callback=self.on_region_selected,
-            on_validation_change=self.on_field_validation_change
-        )
-        
-        self.item_field = AutoCompleteField(
-            label="Item Type",
-            hint_text="Retriever",
-            default_value="Retriever",
-            data_dict=self.items_data,
-            on_select_callback=self.on_item_selected,
-            on_validation_change=self.on_field_validation_change
-        )
-        
-        self.setup_ui()
-        
-        # Set default values after adding UI to page
-        self.set_default_values()
-        
-        # Market logs directory monitoring
-        self.is_processing = False  # Request processing flag
-        self.observer = None
-        self.marketlogs_dir = Path.home() / "Documents" / "EVE" / "logs" / "Marketlogs"
-        self.start_file_monitoring()
-    
-    def load_static_data(self):
-        """Load static data from CSV files"""
-        # Define path to data folder
-        data_dir = os.path.join(os.path.dirname(__file__), 'data')
-        
-        # Load regions
-        regions_file = os.path.join(data_dir, 'mapRegions.csv')
-        try:
-            with open(regions_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    region_id = row.get('regionID', '')
-                    region_name = row.get('regionName', '')
-                    if region_id and region_name:
-                        self.regions_data[region_name] = region_id
-            print(f"Loaded regions: {len(self.regions_data)}")
-        except Exception as e:
-            print(f"Error loading regions: {e}")
-        
-        # Load item types (only published)
-        items_file = os.path.join(data_dir, 'invTypes.csv')
-        try:
-            with open(items_file, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    type_id = row.get('typeID', '')
-                    type_name = row.get('typeName', '')
-                    published = row.get('published', '0')
-                    
-                    # Load only published items
-                    if type_id and type_name and published == '1':
-                        self.items_data[type_name] = type_id
-            print(f"Loaded items: {len(self.items_data)}")
-        except Exception as e:
-            print(f"Error loading items: {e}")
-    
-    def set_default_values(self):
-        """Set default values"""
-        # The Forge
-        if "The Forge" in self.regions_data:
-            self.region_field.select_suggestion("The Forge", self.regions_data["The Forge"])
-        
-        # Retriever
-        if "Retriever" in self.items_data:
-            self.item_field.select_suggestion("Retriever", self.items_data["Retriever"])
-    
-    def on_region_selected(self, name, region_id):
-        """Callback when region is selected"""
-        print(f"Selected region: {name} (ID: {region_id})")
-    
-    def on_item_selected(self, name, item_id):
-        """Callback when item is selected"""
-        print(f"Selected item: {name} (ID: {item_id})")
-    
-    def on_field_validation_change(self, is_valid):
-        """Callback when field validity changes"""
-        # Check validity of both fields
-        both_valid = self.region_field.is_valid and self.item_field.is_valid
-        self.get_button.disabled = not both_valid
-        
-        try:
-            if self.get_button.page:
-                self.get_button.update()
-        except:
-            pass
-    
-    def setup_ui(self):
-        """Setup user interface"""
-        # Title
-        title = ft.Text(
-            "EVE Online Market History",
-            size=24,
-            weight=ft.FontWeight.BOLD
-        )
-        
-        # Info
-        info_text = ft.Text(
-            "Start typing a name (minimum 3 characters) to search",
-            size=12,
-            color=ft.Colors.GREY_700
-        )
-        
-        # Input fields in a row
+        # Input fields row
         input_row = ft.Row([
             self.region_field.container,
             self.item_field.container
@@ -537,14 +560,14 @@ class EVEMarketApp:
                 )
             )
         
-        # Update data container
-        self.data_container.controls.clear()
+        # Update data column
+        self.data_column.controls.clear()
         # Wrap table in scrollable container
         scrollable_table = ft.Container(
             content=ft.Column([self.data_table], scroll=ft.ScrollMode.AUTO),
             height=500,  # Fixed height for scrolling
         )
-        self.data_container.controls.append(scrollable_table)
+        self.data_column.controls.append(scrollable_table)
         self.page.update()
     
     def start_file_monitoring(self):

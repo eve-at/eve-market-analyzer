@@ -1,0 +1,16 @@
+# MySQL database connection settings
+DB_CONFIG = {
+    'host': 'localhost',
+    'database': 'evetrader',
+    'user': 'user',
+    'password': 'pass'
+}
+
+# Static data
+REGIONS_DF = 'https://www.fuzzwork.co.uk/dump/latest/mapRegions.csv'
+TYPES_DF = 'https://www.fuzzwork.co.uk/dump/latest/invTypes.csv'
+
+# Path to EVE Online market logs directory
+# Example for Windows: r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
+# Example for Linux: '/home/username/.eve/logs/Marketlogs'
+MARKETLOGS_DIR = r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'

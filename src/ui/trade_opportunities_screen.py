@@ -146,52 +146,67 @@ class TradeOpportunitiesScreen:
             expand=True
         )
 
+        # Accordion for filters
+        self.filter_accordion = ft.ExpansionTile(
+            title=ft.Text("Filters & Settings", size=16, weight=ft.FontWeight.BOLD),
+            subtitle=ft.Text("Click to expand/collapse"),
+            expanded=True,
+            controls=[
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            self.region_field.container,
+                            self.update_orders_button
+                        ], spacing=15, vertical_alignment=ft.MainAxisAlignment.START),
+                        ft.Container(height=5),
+                        self.status_text,
+                        ft.Container(height=8),
+                        ft.Text("Filter Parameters", size=14, weight=ft.FontWeight.BOLD),
+                        ft.Container(height=3),
+                        ft.Row([
+                            self.min_sell_price_field,
+                            self.max_buy_price_field,
+                            self.min_profit_percent_field,
+                            self.max_profit_percent_field,
+                            self.min_daily_quantity_field
+                        ], spacing=10, wrap=True),
+                        ft.Container(height=5),
+                        ft.Row([
+                            self.find_opportunities_button,
+                            self.export_button
+                        ], spacing=10),
+                    ], spacing=2),
+                    padding=ft.padding.only(left=10, right=10, bottom=10)
+                )
+            ]
+        )
+
         # Main container
         self.container = ft.Container(
             content=ft.Column([
                 ft.Row([
                     self.back_button
                 ], alignment=ft.MainAxisAlignment.START),
-                ft.Container(height=10),
+                ft.Container(height=5),
                 ft.Text(
                     "Trade Opportunities Finder",
-                    size=28,
+                    size=24,
                     weight=ft.FontWeight.BOLD
                 ),
-                ft.Container(height=10),
+                ft.Container(height=3),
                 ft.Text(
                     "Find profitable trading opportunities in EVE Online",
-                    size=14,
+                    size=12,
                     color=ft.Colors.GREY_700
                 ),
-                ft.Container(height=20),
-                ft.Row([
-                    self.region_field.container,
-                    self.update_orders_button
-                ], spacing=20, vertical_alignment=ft.MainAxisAlignment.START),
-                self.status_text,
-                ft.Container(height=15),
-                ft.Text("Filter Parameters", size=16, weight=ft.FontWeight.BOLD),
-                ft.Container(height=5),
-                ft.Row([
-                    self.min_sell_price_field,
-                    self.max_buy_price_field,
-                    self.min_profit_percent_field,
-                    self.max_profit_percent_field,
-                    self.min_daily_quantity_field
-                ], spacing=15, wrap=True),
-                ft.Container(height=10),
-                ft.Row([
-                    self.find_opportunities_button,
-                    self.export_button
-                ], spacing=15),
-                ft.Container(height=10),
+                ft.Container(height=8),
+                self.filter_accordion,
                 ft.Container(height=5),
                 self.log_container,
                 ft.Divider(),
                 self.results_container
-            ], spacing=5),
-            padding=20,
+            ], spacing=0),
+            padding=10,
             expand=True
         )
 
@@ -445,15 +460,32 @@ class TradeOpportunitiesScreen:
         # Create DataTable rows
         rows = []
         for opp in page_data:
+            type_id_text = ft.Text(
+                str(opp['type_id']),
+                color=ft.Colors.BLUE,
+                style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE)
+            )
+            item_name_text = ft.Text(
+                opp['typeName'],
+                color=ft.Colors.BLUE,
+                style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE)
+            )
+
             rows.append(
                 ft.DataRow(
                     cells=[
-                        ft.DataCell(ft.Text(str(opp['type_id']))),
-                        ft.DataCell(ft.Text(opp['typeName'])),
+                        ft.DataCell(
+                            type_id_text,
+                            on_tap=lambda _, tid=opp['type_id']: self.page.run_task(self.copy_to_clipboard, str(tid), "Type ID")
+                        ),
+                        ft.DataCell(
+                            item_name_text,
+                            on_tap=lambda _, name=opp['typeName']: self.page.run_task(self.copy_to_clipboard, name, "Item name")
+                        ),
                         ft.DataCell(ft.Text(str(opp['buy_orders_count']))),
                         ft.DataCell(ft.Text(str(opp['sell_orders_count']))),
-                        ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.2f}")),
-                        ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.2f}")),
+                        ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.0f}")),
+                        ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.0f}")),
                         ft.DataCell(ft.Text(f"{int(opp['profit'])}%")),
                     ]
                 )
@@ -468,8 +500,9 @@ class TradeOpportunitiesScreen:
             vertical_lines=ft.BorderSide(1, ft.Colors.GREY_300),
             horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
             heading_row_color=ft.Colors.GREY_200,
-            heading_row_height=30,
-            data_row_min_height=30,
+            heading_row_height=25,
+            data_row_min_height=20,
+            data_row_max_height=20,
             sort_column_index=self.sort_column_index,
             sort_ascending=self.sort_ascending,
         )
@@ -568,6 +601,19 @@ class TradeOpportunitiesScreen:
 
         thread = threading.Thread(target=export_thread, daemon=True)
         thread.start()
+
+    async def copy_to_clipboard(self, text, label):
+        """Copy text to clipboard and show notification"""
+        # Set clipboard value using Flet's async Clipboard API
+        await ft.Clipboard().set(text)
+
+        # Show snackbar notification
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(f"{label} copied: {text}"),
+            duration=2000
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
 
     def display_opportunities(self, opportunities):
         """Display opportunities in a sortable DataTable"""

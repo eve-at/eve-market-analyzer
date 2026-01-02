@@ -1,9 +1,10 @@
 # Settings and configuration
 settings.py
 
-# Data directory
+# Data directory & exports
 data/
 data/*
+*.csv
 
 # Python
 __pycache__/

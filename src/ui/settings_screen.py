@@ -34,6 +34,9 @@ class SettingsScreen:
         # Load marketlogs directory from database or use provided default
         saved_marketlogs = get_setting('marketlogs_dir', marketlogs_dir)
 
+        # Load CSV export path from database or use default
+        saved_csv_export_path = get_setting('csv_export_path', 'data')
+
         # Character info display
         self.character_info_row = ft.Row(visible=False, spacing=15)
 
@@ -111,6 +114,23 @@ class SettingsScreen:
             hint_text="Path to EVE Online market logs folder"
         )
 
+        self.csv_export_path_field = ft.TextField(
+            label="CSV Export Directory",
+            value=saved_csv_export_path,
+            width=500,
+            hint_text="Path to save exported CSV files (default: data)"
+        )
+
+        self.csv_browse_button = ft.ElevatedButton(
+            "Browse",
+            on_click=self.on_browse_csv_path,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREY_700,
+                color=ft.Colors.WHITE,
+                padding=ft.Padding(15, 10, 15, 10)
+            )
+        )
+
         # Buttons
         self.save_button = ft.ElevatedButton(
             "Save",
@@ -186,6 +206,11 @@ class SettingsScreen:
                 ),
                 ft.Container(height=10),
                 self.marketlogs_dir_field,
+                ft.Container(height=10),
+                ft.Row([
+                    self.csv_export_path_field,
+                    self.csv_browse_button
+                ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.END),
                 ft.Container(height=30),
 
                 # Save button
@@ -260,6 +285,18 @@ class SettingsScreen:
 
         self.page.update()
 
+    def on_browse_csv_path(self, e):
+        """Handle browse button click for CSV export path"""
+        def on_result(result: ft.FilePickerResultEvent):
+            if result.path:
+                self.csv_export_path_field.value = result.path
+                self.page.update()
+
+        file_picker = ft.FilePicker(on_result=on_result)
+        self.page.overlay.append(file_picker)
+        self.page.update()
+        file_picker.get_directory_path(dialog_title="Select CSV Export Directory")
+
     def on_save(self, e):
         """Handle save button click"""
         try:
@@ -279,6 +316,9 @@ class SettingsScreen:
 
             # Save marketlogs directory to global settings
             save_setting('marketlogs_dir', self.marketlogs_dir_field.value)
+
+            # Save CSV export path to global settings
+            save_setting('csv_export_path', self.csv_export_path_field.value)
 
             self.status_text.value = "Settings saved successfully!"
             self.status_text.color = ft.Colors.GREEN

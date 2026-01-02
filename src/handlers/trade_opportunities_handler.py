@@ -306,7 +306,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                 sell_orders_count INT,
                 min_sell_price DECIMAL(20, 2),
                 max_buy_price DECIMAL(20, 2),
-                profit DECIMAL(10, 2),
+                profit INT,
                 qty_avg INT
             )
         """)
@@ -452,13 +452,20 @@ def export_opportunities_to_csv(region_id, callback=None):
         import csv
         import os
         from datetime import datetime
+        from src.database.models import get_setting
+
+        # Get CSV export path from settings (default to 'data' folder)
+        csv_export_path = get_setting('csv_export_path', 'data')
+
+        # Create directory if it doesn't exist
+        os.makedirs(csv_export_path, exist_ok=True)
 
         # Create filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"opportunities_{region_id}_{timestamp}.csv"
 
-        # Get the current working directory
-        filepath = os.path.join(os.getcwd(), filename)
+        # Create full filepath
+        filepath = os.path.join(csv_export_path, filename)
 
         log(f"Writing to {filepath}...")
 

@@ -222,23 +222,12 @@ class MainApp:
 
         self.settings_screen = SettingsScreen(
             page=self.page,
-            on_back_callback=self.on_settings_back,
+            on_back_callback=self.show_main_menu,
             marketlogs_dir=marketlogs_dir
         )
 
-        self.page.add(
-            ft.Column([
-                self.app_bar.get(),
-                ft.Container(content=self.settings_screen.build(), expand=True)
-            ], spacing=0, expand=True)
-        )
+        self.page.add(self.settings_screen.build())
         self.page.update()
-
-    def on_settings_back(self):
-        """Handle back from settings and refresh app bar"""
-        # Refresh app bar to update character info
-        self.app_bar.refresh()
-        self.show_main_menu()
 
 
 def main(page: ft.Page):

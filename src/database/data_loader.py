@@ -53,3 +53,41 @@ def load_regions_and_items():
             connection.close()
 
     return regions_data, items_data
+
+
+def load_top_market_groups():
+    """Load top-level market groups from MySQL database
+
+    Returns:
+        list: List of dicts with keys: marketGroupID, iconID, marketGroupName
+    """
+    market_groups = []
+
+    try:
+        # Reload settings to get fresh DB_CONFIG
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor(dictionary=True)
+
+            # Load top market groups
+            cursor.execute("""
+                SELECT marketGroupID, iconID, marketGroupName
+                FROM market_groups
+                WHERE marketGroupID IN (SELECT DISTINCT(topGroupID) FROM market_groups)
+                ORDER BY marketGroupName
+            """)
+            market_groups = cursor.fetchall()
+            print(f"Loaded {len(market_groups)} top market groups from database")
+
+    except Error as e:
+        print(f"Database error: {e}")
+        # Return empty list if database error
+        market_groups = []
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+    return market_groups

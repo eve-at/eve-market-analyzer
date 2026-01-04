@@ -2,6 +2,7 @@
 import flet as ft
 from .autocomplete_field import AutoCompleteField
 from src.handlers.trade_opportunities_handler import check_orders_count, update_orders, find_opportunities, export_opportunities_to_csv
+from src.database import load_top_market_groups
 import threading
 import importlib
 
@@ -27,6 +28,11 @@ class TradeOpportunitiesScreen:
         import settings
         importlib.reload(settings)
         self.settings = settings
+
+        # Load top market groups
+        self.market_groups = load_top_market_groups()
+        self.market_group_checkboxes = {}
+        self.selected_market_group_ids = set()  # Track selected IDs
 
         # Region selection field
         self.region_field = AutoCompleteField(
@@ -54,36 +60,75 @@ class TradeOpportunitiesScreen:
         self.min_sell_price_field = ft.TextField(
             label="Min. Sell Price",
             value=str(self.settings.MIN_SELL_PRICE),
-            width=180,
+            width=160,
+            height=50,
+            text_size=12,
             keyboard_type=ft.KeyboardType.NUMBER
         )
 
         self.max_buy_price_field = ft.TextField(
             label="Max. Buy Price",
             value=str(self.settings.MAX_BUY_PRICE),
-            width=180,
+            width=160,
+            height=50,
+            text_size=12,
             keyboard_type=ft.KeyboardType.NUMBER
         )
 
         self.min_profit_percent_field = ft.TextField(
             label="Min. Profit, %",
             value=str(self.settings.MIN_PROFIT_PERCENT),
-            width=150,
+            width=140,
+            height=50,
+            text_size=12,
             keyboard_type=ft.KeyboardType.NUMBER
         )
 
         self.max_profit_percent_field = ft.TextField(
             label="Max. Profit, %",
             value=str(self.settings.MAX_PROFIT_PERCENT),
-            width=150,
+            width=140,
+            height=50,
+            text_size=12,
             keyboard_type=ft.KeyboardType.NUMBER
         )
 
         self.min_daily_quantity_field = ft.TextField(
             label="Min. Daily Quantity",
             value=str(self.settings.MIN_DAILY_QUANTITY),
-            width=180,
+            width=160,
+            height=50,
+            text_size=12,
             keyboard_type=ft.KeyboardType.NUMBER
+        )
+
+        # Create checkboxes for market groups
+        market_group_checkboxes_controls = []
+        for group in self.market_groups:
+            group_id = group['marketGroupID']
+            checkbox = ft.Checkbox(
+                label=group['marketGroupName'],
+                value=False,
+                data=group_id,
+                on_change=lambda e, gid=group_id: self.on_market_group_changed(e, gid)
+            )
+            self.market_group_checkboxes[group_id] = checkbox
+            market_group_checkboxes_controls.append(checkbox)
+
+        # Container for market groups checkboxes
+        self.market_groups_container = ft.Container(
+            content=ft.Column([
+                ft.Text("Market Groups (optional)", size=12, weight=ft.FontWeight.BOLD),
+                ft.Container(height=2),
+                ft.Column(
+                    market_group_checkboxes_controls,
+                    spacing=2,
+                    scroll=ft.ScrollMode.AUTO,
+                    height=200
+                )
+            ], spacing=0),
+            visible=len(self.market_groups) > 0,
+            padding=5
         )
 
         self.find_opportunities_button = ft.ElevatedButton(
@@ -114,7 +159,7 @@ class TradeOpportunitiesScreen:
         )
 
         # Status text
-        self.status_text = ft.Text("Select a region to begin", size=14, color=ft.Colors.GREY_600)
+        self.status_text = ft.Text("Select a region to begin", size=12, color=ft.Colors.GREY_600)
 
         # Log container for update progress
         self.log_column = ft.Column(
@@ -127,9 +172,9 @@ class TradeOpportunitiesScreen:
             content=self.log_column,
             border=ft.border.all(1, ft.Colors.GREY_400),
             border_radius=5,
-            padding=10,
+            padding=8,
             bgcolor=ft.Colors.BLACK,
-            height=350,
+            height=250,
             width=700,
             visible=False
         )
@@ -148,8 +193,8 @@ class TradeOpportunitiesScreen:
 
         # Accordion for filters
         self.filter_accordion = ft.ExpansionTile(
-            title=ft.Text("Filters & Settings", size=16, weight=ft.FontWeight.BOLD),
-            subtitle=ft.Text("Click to expand/collapse"),
+            title=ft.Text("Filters & Settings", size=14, weight=ft.FontWeight.BOLD),
+            subtitle=ft.Text("Click to expand/collapse", size=11),
             expanded=True,
             controls=[
                 ft.Container(
@@ -157,26 +202,39 @@ class TradeOpportunitiesScreen:
                         ft.Row([
                             self.region_field.container,
                             self.update_orders_button
-                        ], spacing=15, vertical_alignment=ft.MainAxisAlignment.START),
-                        ft.Container(height=5),
-                        self.status_text,
-                        ft.Container(height=8),
-                        ft.Text("Filter Parameters", size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=10, vertical_alignment=ft.MainAxisAlignment.START),
                         ft.Container(height=3),
+                        self.status_text,
+                        ft.Container(height=5),
                         ft.Row([
-                            self.min_sell_price_field,
-                            self.max_buy_price_field,
-                            self.min_profit_percent_field,
-                            self.max_profit_percent_field,
-                            self.min_daily_quantity_field
-                        ], spacing=10, wrap=True),
+                            # Left column - Filter Parameters
+                            ft.Container(
+                                content=ft.Column([
+                                    ft.Text("Filter Parameters", size=12, weight=ft.FontWeight.BOLD),
+                                    ft.Container(height=2),
+                                    ft.Column([
+                                        self.min_sell_price_field,
+                                        self.max_buy_price_field,
+                                        self.min_profit_percent_field,
+                                        self.max_profit_percent_field,
+                                        self.min_daily_quantity_field
+                                    ], spacing=5)
+                                ], spacing=0),
+                                expand=1
+                            ),
+                            # Right column - Market Groups
+                            ft.Container(
+                                content=self.market_groups_container,
+                                expand=1
+                            )
+                        ], spacing=15, vertical_alignment=ft.CrossAxisAlignment.START),
                         ft.Container(height=5),
                         ft.Row([
                             self.find_opportunities_button,
                             self.export_button
                         ], spacing=10),
-                    ], spacing=2),
-                    padding=ft.padding.only(left=10, right=10, bottom=10)
+                    ], spacing=0),
+                    padding=ft.padding.only(left=8, right=8, bottom=8, top=3)
                 )
             ]
         )
@@ -187,28 +245,37 @@ class TradeOpportunitiesScreen:
                 ft.Row([
                     self.back_button
                 ], alignment=ft.MainAxisAlignment.START),
-                ft.Container(height=5),
-                ft.Text(
-                    "Trade Opportunities Finder",
-                    size=24,
-                    weight=ft.FontWeight.BOLD
-                ),
                 ft.Container(height=3),
                 ft.Text(
+                    "Trade Opportunities Finder",
+                    size=18,
+                    weight=ft.FontWeight.BOLD
+                ),
+                ft.Container(height=2),
+                ft.Text(
                     "Find profitable trading opportunities in EVE Online",
-                    size=12,
+                    size=11,
                     color=ft.Colors.GREY_700
                 ),
-                ft.Container(height=8),
-                self.filter_accordion,
                 ft.Container(height=5),
+                self.filter_accordion,
+                ft.Container(height=3),
                 self.log_container,
                 ft.Divider(),
                 self.results_container
             ], spacing=0),
-            padding=10,
+            padding=8,
             expand=True
         )
+
+    def on_market_group_changed(self, e, group_id):
+        """Handle market group checkbox change"""
+        if e.control.value:
+            self.selected_market_group_ids.add(group_id)
+        else:
+            self.selected_market_group_ids.discard(group_id)
+        print(f"DEBUG: Market group {group_id} changed to {e.control.value}")
+        print(f"DEBUG: Selected IDs: {self.selected_market_group_ids}")
 
     def on_region_selected(self, name, region_id):
         """Handle region selection"""
@@ -319,6 +386,12 @@ class TradeOpportunitiesScreen:
             self.page.update()
             return
 
+        # Get selected market group IDs from tracked set
+        selected_market_groups = list(self.selected_market_group_ids)
+
+        # Debug: print selected groups
+        print(f"DEBUG: Selected market groups: {selected_market_groups}")
+
         # Show progress log
         self.log_column.controls.clear()
         self.log_container.visible = True
@@ -342,6 +415,7 @@ class TradeOpportunitiesScreen:
                 min_profit_percent,
                 max_profit_percent,
                 min_daily_quantity,
+                selected_market_groups=selected_market_groups,
                 callback=self.log_progress
             )
 
@@ -529,7 +603,7 @@ class TradeOpportunitiesScreen:
         self.results_container.content = ft.Column([
             ft.Text(
                 f"Trade Opportunities ({len(self.opportunities_data)} items)",
-                size=18,
+                size=16,
                 weight=ft.FontWeight.BOLD
             ),
             ft.Container(height=10),

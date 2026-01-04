@@ -5,6 +5,7 @@ settings.py
 data/
 data/*
 *.csv
+*.bz2
 
 # Python
 __pycache__/

@@ -230,7 +230,8 @@ def update_orders(region_id, callback=None):
 
 
 def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_percent,
-                      max_profit_percent, min_daily_quantity, callback=None):
+                      max_profit_percent, min_daily_quantity, selected_market_groups=None,
+                      callback=None):
     """
     Find trade opportunities based on filters and save to database
 
@@ -241,6 +242,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
     min_profit_percent - Minimum profit percentage
     max_profit_percent - Maximum profit percentage
     min_daily_quantity - Minimum daily quantity
+    selected_market_groups - Optional list of market group IDs to filter by
     callback - optional callback function for progress messages
 
     Returns:
@@ -321,6 +323,18 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
         # Execute the main query
         log("Executing opportunities query...")
+        log(f"Selected market groups: {selected_market_groups}")
+
+        # Build the query with optional market groups filter
+        market_groups_join = ""
+        market_groups_filter = ""
+
+        if selected_market_groups and len(selected_market_groups) > 0:
+            market_groups_join = "JOIN market_groups mg ON mg.marketGroupID = t.marketGroupID"
+            placeholders = ', '.join(['%s'] * len(selected_market_groups))
+            market_groups_filter = f"AND mg.topGroupID IN ({placeholders})"
+            log(f"Filtering by {len(selected_market_groups)} market group(s): {selected_market_groups}")
+
         query = f"""
             INSERT INTO {opportunities_table}
             (type_id, typeName, buy_orders_count, sell_orders_count,
@@ -340,21 +354,32 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
             JOIN types t ON t.typeID = o.type_id
             WHERE o.type_id IN (
                 SELECT
-                    type_id
-                FROM {orders_table}
-                WHERE duration < 365
-                    AND is_buy_order = 0
-                GROUP BY type_id
-                HAVING MIN(CASE WHEN is_buy_order = 0 THEN price END) > %s
-                    AND MIN(CASE WHEN is_buy_order = 0 THEN price END) < %s
+                    o.type_id
+                FROM {orders_table} o
+                JOIN types t ON t.typeID = o.type_id
+                {market_groups_join}
+                WHERE o.duration < 365
+                    AND o.is_buy_order = 0
+                    {market_groups_filter}
+                GROUP BY o.type_id
+                HAVING MIN(CASE WHEN o.is_buy_order = 0 THEN price END) > %s
+                    AND MIN(CASE WHEN o.is_buy_order = 0 THEN price END) < %s
             )
             GROUP BY o.type_id, t.typeName
             HAVING profit > %s AND profit < %s
             ORDER BY o.type_id
         """
 
-        cursor.execute(query, (min_sell_price, max_buy_price, min_profit_percent, max_profit_percent))
+        # Build parameters list
+        params = []
+        if selected_market_groups and len(selected_market_groups) > 0:
+            params.extend(selected_market_groups)
+        params.extend([min_sell_price, max_buy_price, min_profit_percent, max_profit_percent])
+
+        cursor.execute(query, params)
         connection.commit()
+
+        print(query, min_sell_price, max_buy_price, min_profit_percent, max_profit_percent)
 
         log("Query executed successfully")
         log("")

@@ -1,5 +1,5 @@
 """Database operations"""
-from .data_loader import load_regions_and_items
+from .data_loader import load_regions_and_items, load_top_market_groups
 from .validator import validate_database, DatabaseStatus
 from .models import (
     create_tables,
@@ -12,6 +12,7 @@ from .models import (
 
 __all__ = [
     'load_regions_and_items',
+    'load_top_market_groups',
     'validate_database',
     'DatabaseStatus',
     'create_tables',

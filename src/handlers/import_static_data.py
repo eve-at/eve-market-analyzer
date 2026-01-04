@@ -87,6 +87,7 @@ def import_static_data(callback=None):
     try:
         regions_file = download_csv(settings.REGIONS_DF, 'mapRegions.csv', callback)
         types_file = download_csv(settings.TYPES_DF, 'invTypes.csv', callback)
+        market_groups_file = download_csv(settings.MARKET_GROUPS_DF, 'invMarketGroups.csv', callback)
     except Exception as e:
         log(f"\nFailed to download files: {e}")
         return False
@@ -109,8 +110,10 @@ def import_static_data(callback=None):
             log("Reading CSV files...")
             regions_df = pd.read_csv(regions_file)
             types_df = pd.read_csv(types_file)
+            market_groups_df = pd.read_csv(market_groups_file)
             log(f"Loaded {len(regions_df)} regions")
             log(f"Loaded {len(types_df)} item types")
+            log(f"Loaded {len(market_groups_df)} item types")
             log("")
 
             # Create regions table
@@ -159,10 +162,28 @@ def import_static_data(callback=None):
             log("Table 'types' created or already exists")
             log("")
 
+
+            # Create market groups table
+            log("Creating market_groups table...")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS market_groups (
+                    marketGroupID INT PRIMARY KEY,
+                    parentGroupID INT,
+                    topGroupID INT,
+                    marketGroupName VARCHAR(255),
+                    description TEXT,
+                    iconID INT,
+                    hasTypes TINYINT(1)                    
+                )
+            """)
+            log("Table 'market_groups' created or already exists")
+            log("")
+
             # Clear existing data
             log("Clearing existing data...")
             cursor.execute("TRUNCATE TABLE regions")
             cursor.execute("TRUNCATE TABLE types")
+            cursor.execute("TRUNCATE TABLE market_groups")
             log("Tables cleared")
             log("")
 
@@ -200,9 +221,73 @@ def import_static_data(callback=None):
             log(f"Successfully imported {type_count} item types")
             log("")
 
+            # Import types
+            log("Importing market_groups data...")
+            type_count = 0
+            for index, row in market_groups_df.iterrows():
+                values = tuple(None if pd.isna(val) else val for val in row)
+                placeholders = ', '.join(['%s'] * len(row))
+                columns = ', '.join(row.index)
+                sql = f"INSERT INTO market_groups ({columns}) VALUES ({placeholders})"
+                cursor.execute(sql, values)
+                type_count += 1
+
+                if type_count % 1000 == 0:
+                    log(f"  Imported {type_count}/{len(types_df)} market groups...")
+
+            log(f"Successfully imported {type_count} market groups")
+            log("")
+
             # Commit transaction
             connection.commit()
             log("All changes committed to database")
+            log("")
+
+            # Fill topGroupID - find the root group for each market group
+            log("Calculating topGroupID for market groups...")
+
+            # Get all groups with their parent relationships
+            cursor.execute("""
+                SELECT marketGroupID, parentGroupID
+                FROM market_groups
+            """)
+            all_groups = {row[0]: row[1] for row in cursor.fetchall()}
+
+            # Function to find top group for a given group
+            def find_top_group(group_id, visited=None):
+                if visited is None:
+                    visited = set()
+
+                # Prevent infinite loops
+                if group_id in visited:
+                    return group_id
+                visited.add(group_id)
+
+                parent_id = all_groups.get(group_id)
+
+                # If no parent, this is the top group
+                if parent_id is None:
+                    return group_id
+
+                # Recursively find the top group
+                return find_top_group(parent_id, visited)
+
+            # Update topGroupID for each group
+            update_count = 0
+            for group_id in all_groups.keys():
+                top_group_id = find_top_group(group_id)
+                cursor.execute("""
+                    UPDATE market_groups
+                    SET topGroupID = %s
+                    WHERE marketGroupID = %s
+                """, (top_group_id, group_id))
+                update_count += 1
+
+                if update_count % 100 == 0:
+                    log(f"  Updated topGroupID for {update_count}/{len(all_groups)} groups...")
+
+            connection.commit()
+            log(f"Successfully updated topGroupID for {update_count} market groups")
             log("")
 
             log("="*60)

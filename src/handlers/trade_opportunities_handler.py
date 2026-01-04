@@ -230,8 +230,8 @@ def update_orders(region_id, callback=None):
 
 
 def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_percent,
-                      max_profit_percent, min_daily_quantity, selected_market_groups=None,
-                      callback=None):
+                      max_profit_percent, min_daily_quantity, max_competitors=None,
+                      selected_market_groups=None, callback=None):
     """
     Find trade opportunities based on filters and save to database
 
@@ -242,6 +242,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
     min_profit_percent - Minimum profit percentage
     max_profit_percent - Maximum profit percentage
     min_daily_quantity - Minimum daily quantity
+    max_competitors - Maximum number of competitors (optional)
     selected_market_groups - Optional list of market group IDs to filter by
     callback - optional callback function for progress messages
 
@@ -309,6 +310,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                 min_sell_price DECIMAL(20, 2),
                 max_buy_price DECIMAL(20, 2),
                 profit INT,
+                competitors INT,
                 qty_avg INT
             )
         """)
@@ -324,6 +326,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         # Execute the main query
         log("Executing opportunities query...")
         log(f"Selected market groups: {selected_market_groups}")
+        log(f"Max competitors: {max_competitors}")
 
         # Build the query with optional market groups filter
         market_groups_join = ""
@@ -335,10 +338,16 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
             market_groups_filter = f"AND mg.topGroupID IN ({placeholders})"
             log(f"Filtering by {len(selected_market_groups)} market group(s): {selected_market_groups}")
 
+        # Build competitors filter
+        competitors_filter = ""
+        if max_competitors is not None:
+            competitors_filter = f"AND competitors < %s"
+            log(f"Filtering by max competitors: {max_competitors}")
+
         query = f"""
             INSERT INTO {opportunities_table}
             (type_id, typeName, buy_orders_count, sell_orders_count,
-             min_sell_price, max_buy_price, profit, qty_avg)
+             min_sell_price, max_buy_price, profit, competitors, qty_avg)
             SELECT
                 o.type_id,
                 t.typeName,
@@ -349,6 +358,10 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                 ROUND((MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) -
                        MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END)) /
                        MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) * 100) AS profit,
+                GREATEST(
+                    COUNT(CASE WHEN DATEDIFF(NOW(), issued) < 2 AND is_buy_order = 1 THEN 1 ELSE NULL END),
+                    COUNT(CASE WHEN DATEDIFF(NOW(), issued) < 2 AND is_buy_order = 0 THEN 1 ELSE NULL END)
+                ) as competitors,
                 NULL as qty_avg
             FROM {orders_table} o
             JOIN types t ON t.typeID = o.type_id
@@ -366,7 +379,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                     AND MIN(CASE WHEN o.is_buy_order = 0 THEN price END) < %s
             )
             GROUP BY o.type_id, t.typeName
-            HAVING profit > %s AND profit < %s
+            HAVING profit > %s AND profit < %s {competitors_filter}
             ORDER BY o.type_id
         """
 
@@ -375,6 +388,8 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         if selected_market_groups and len(selected_market_groups) > 0:
             params.extend(selected_market_groups)
         params.extend([min_sell_price, max_buy_price, min_profit_percent, max_profit_percent])
+        if max_competitors is not None:
+            params.append(max_competitors)
 
         cursor.execute(query, params)
         connection.commit()

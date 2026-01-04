@@ -138,7 +138,7 @@ class TradeOpportunitiesScreen:
                 ft.Container(
                     content=ft.Column(
                         market_group_checkboxes_controls,
-                        spacing=-8,
+                        spacing=0,
                         scroll=ft.ScrollMode.AUTO
                     ),
                     height=200,
@@ -407,6 +407,7 @@ class TradeOpportunitiesScreen:
             min_profit_percent = int(self.min_profit_percent_field.value)
             max_profit_percent = int(self.max_profit_percent_field.value)
             min_daily_quantity = int(self.min_daily_quantity_field.value)
+            max_competitors = int(self.max_competitors_field.value) if self.max_competitors_field.value else None
         except ValueError:
             self.status_text.value = "Please enter valid numbers in all fields"
             self.status_text.color = ft.Colors.RED
@@ -418,6 +419,7 @@ class TradeOpportunitiesScreen:
 
         # Debug: print selected groups
         print(f"DEBUG: Selected market groups: {selected_market_groups}")
+        print(f"DEBUG: Max competitors: {max_competitors}")
 
         # Show progress log
         self.log_column.controls.clear()
@@ -442,6 +444,7 @@ class TradeOpportunitiesScreen:
                 min_profit_percent,
                 max_profit_percent,
                 min_daily_quantity,
+                max_competitors=max_competitors,
                 selected_market_groups=selected_market_groups,
                 callback=self.log_progress
             )
@@ -484,14 +487,16 @@ class TradeOpportunitiesScreen:
             self.sort_ascending = True
 
         # Define sort keys for each column
+        # Order: Type ID, Type Name, Profit %, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders
         sort_keys = [
             lambda x: x['type_id'],
             lambda x: x['typeName'].lower(),
+            lambda x: float(x['profit']),
+            lambda x: x['competitors'] if x['competitors'] is not None else 0,
+            lambda x: float(x['max_buy_price']),
+            lambda x: float(x['min_sell_price']),
             lambda x: x['buy_orders_count'],
             lambda x: x['sell_orders_count'],
-            lambda x: float(x['min_sell_price']),
-            lambda x: float(x['max_buy_price']),
-            lambda x: float(x['profit']),
         ]
 
         # Sort the data
@@ -522,39 +527,45 @@ class TradeOpportunitiesScreen:
         total_pages = (len(self.opportunities_data) - 1) // self.rows_per_page + 1
 
         # Create DataTable columns with sort callbacks
+        # Order: Type ID, Type Name, Profit %, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders
         columns = [
             ft.DataColumn(
                 ft.Text("Type ID", weight=ft.FontWeight.BOLD),
                 on_sort=lambda _: self.sort_opportunities(0)
             ),
             ft.DataColumn(
-                ft.Text("Item Name", weight=ft.FontWeight.BOLD),
+                ft.Text("Type Name", weight=ft.FontWeight.BOLD),
                 on_sort=lambda _: self.sort_opportunities(1)
-            ),
-            ft.DataColumn(
-                ft.Text("Buy Orders", weight=ft.FontWeight.BOLD),
-                numeric=True,
-                on_sort=lambda _: self.sort_opportunities(2)
-            ),
-            ft.DataColumn(
-                ft.Text("Sell Orders", weight=ft.FontWeight.BOLD),
-                numeric=True,
-                on_sort=lambda _: self.sort_opportunities(3)
-            ),
-            ft.DataColumn(
-                ft.Text("Min Sell Price", weight=ft.FontWeight.BOLD),
-                numeric=True,
-                on_sort=lambda _: self.sort_opportunities(4)
-            ),
-            ft.DataColumn(
-                ft.Text("Max Buy Price", weight=ft.FontWeight.BOLD),
-                numeric=True,
-                on_sort=lambda _: self.sort_opportunities(5)
             ),
             ft.DataColumn(
                 ft.Text("Profit %", weight=ft.FontWeight.BOLD),
                 numeric=True,
+                on_sort=lambda _: self.sort_opportunities(2)
+            ),
+            ft.DataColumn(
+                ft.Text("Competitors", weight=ft.FontWeight.BOLD),
+                numeric=True,
+                on_sort=lambda _: self.sort_opportunities(3)
+            ),
+            ft.DataColumn(
+                ft.Text("Buy Price", weight=ft.FontWeight.BOLD),
+                numeric=True,
+                on_sort=lambda _: self.sort_opportunities(4)
+            ),
+            ft.DataColumn(
+                ft.Text("Sell Price", weight=ft.FontWeight.BOLD),
+                numeric=True,
+                on_sort=lambda _: self.sort_opportunities(5)
+            ),
+            ft.DataColumn(
+                ft.Text("Buy Orders", weight=ft.FontWeight.BOLD),
+                numeric=True,
                 on_sort=lambda _: self.sort_opportunities(6)
+            ),
+            ft.DataColumn(
+                ft.Text("Sell Orders", weight=ft.FontWeight.BOLD),
+                numeric=True,
+                on_sort=lambda _: self.sort_opportunities(7)
             ),
         ]
 
@@ -572,6 +583,7 @@ class TradeOpportunitiesScreen:
                 style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE)
             )
 
+            # Order: Type ID, Type Name, Profit %, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders
             rows.append(
                 ft.DataRow(
                     cells=[
@@ -583,11 +595,12 @@ class TradeOpportunitiesScreen:
                             item_name_text,
                             on_tap=lambda _, name=opp['typeName']: self.page.run_task(self.copy_to_clipboard, name, "Item name")
                         ),
+                        ft.DataCell(ft.Text(f"{int(opp['profit'])}%")),
+                        ft.DataCell(ft.Text(str(opp['competitors']) if opp['competitors'] is not None else "0")),
+                        ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.0f}")),
+                        ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.0f}")),
                         ft.DataCell(ft.Text(str(opp['buy_orders_count']))),
                         ft.DataCell(ft.Text(str(opp['sell_orders_count']))),
-                        ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.0f}")),
-                        ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.0f}")),
-                        ft.DataCell(ft.Text(f"{int(opp['profit'])}%")),
                     ]
                 )
             )
@@ -635,10 +648,11 @@ class TradeOpportunitiesScreen:
             ),
             ft.Container(height=10),
             ft.Container(
-                content=data_table,
+                content=ft.Row([data_table], scroll=ft.ScrollMode.AUTO, expand=True),
                 border=ft.border.all(1, ft.Colors.GREY_400),
                 border_radius=5,
                 padding=10,
+                expand=True,
             ),
             ft.Container(height=10),
             ft.Row([
@@ -646,7 +660,7 @@ class TradeOpportunitiesScreen:
                 page_info,
                 next_button
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
-        ], scroll=ft.ScrollMode.AUTO)
+        ], scroll=ft.ScrollMode.AUTO, expand=True)
 
         # Hide log and show results
         self.log_container.visible = False

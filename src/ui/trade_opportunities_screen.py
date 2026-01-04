@@ -60,46 +60,61 @@ class TradeOpportunitiesScreen:
         self.min_sell_price_field = ft.TextField(
             label="Min. Sell Price",
             value=str(self.settings.MIN_SELL_PRICE),
-            width=160,
-            height=50,
+            height=45,
             text_size=12,
-            keyboard_type=ft.KeyboardType.NUMBER
+            content_padding=8,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True
         )
 
         self.max_buy_price_field = ft.TextField(
             label="Max. Buy Price",
             value=str(self.settings.MAX_BUY_PRICE),
-            width=160,
-            height=50,
+            height=45,
             text_size=12,
-            keyboard_type=ft.KeyboardType.NUMBER
+            content_padding=8,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True
         )
 
         self.min_profit_percent_field = ft.TextField(
             label="Min. Profit, %",
             value=str(self.settings.MIN_PROFIT_PERCENT),
-            width=140,
-            height=50,
+            height=45,
             text_size=12,
-            keyboard_type=ft.KeyboardType.NUMBER
+            content_padding=8,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True
         )
 
         self.max_profit_percent_field = ft.TextField(
             label="Max. Profit, %",
             value=str(self.settings.MAX_PROFIT_PERCENT),
-            width=140,
-            height=50,
+            height=45,
             text_size=12,
-            keyboard_type=ft.KeyboardType.NUMBER
+            content_padding=8,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True
         )
 
         self.min_daily_quantity_field = ft.TextField(
             label="Min. Daily Quantity",
             value=str(self.settings.MIN_DAILY_QUANTITY),
-            width=160,
-            height=50,
+            height=45,
             text_size=12,
-            keyboard_type=ft.KeyboardType.NUMBER
+            content_padding=8,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True
+        )
+
+        self.max_competitors_field = ft.TextField(
+            label="Max. Competitors",
+            value="5",
+            height=45,
+            text_size=12,
+            content_padding=8,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True
         )
 
         # Create checkboxes for market groups
@@ -120,11 +135,16 @@ class TradeOpportunitiesScreen:
             content=ft.Column([
                 ft.Text("Market Groups (optional)", size=12, weight=ft.FontWeight.BOLD),
                 ft.Container(height=2),
-                ft.Column(
-                    market_group_checkboxes_controls,
-                    spacing=2,
-                    scroll=ft.ScrollMode.AUTO,
-                    height=200
+                ft.Container(
+                    content=ft.Column(
+                        market_group_checkboxes_controls,
+                        spacing=-8,
+                        scroll=ft.ScrollMode.AUTO
+                    ),
+                    height=200,
+                    border=ft.border.all(1, ft.Colors.GREY_400),
+                    border_radius=5,
+                    padding=5
                 )
             ], spacing=0),
             visible=len(self.market_groups) > 0,
@@ -213,11 +233,18 @@ class TradeOpportunitiesScreen:
                                     ft.Text("Filter Parameters", size=12, weight=ft.FontWeight.BOLD),
                                     ft.Container(height=2),
                                     ft.Column([
-                                        self.min_sell_price_field,
-                                        self.max_buy_price_field,
-                                        self.min_profit_percent_field,
-                                        self.max_profit_percent_field,
-                                        self.min_daily_quantity_field
+                                        ft.Row([
+                                            self.min_sell_price_field,
+                                            self.max_buy_price_field
+                                        ], spacing=8),
+                                        ft.Row([
+                                            self.min_profit_percent_field,
+                                            self.max_profit_percent_field
+                                        ], spacing=8),
+                                        ft.Row([
+                                            self.min_daily_quantity_field,
+                                            self.max_competitors_field
+                                        ], spacing=8)
                                     ], spacing=5)
                                 ], spacing=0),
                                 expand=1
@@ -245,26 +272,26 @@ class TradeOpportunitiesScreen:
                 ft.Row([
                     self.back_button
                 ], alignment=ft.MainAxisAlignment.START),
-                ft.Container(height=3),
+                ft.Container(height=2),
                 ft.Text(
                     "Trade Opportunities Finder",
                     size=18,
                     weight=ft.FontWeight.BOLD
                 ),
-                ft.Container(height=2),
+                ft.Container(height=1),
                 ft.Text(
                     "Find profitable trading opportunities in EVE Online",
                     size=11,
                     color=ft.Colors.GREY_700
                 ),
-                ft.Container(height=5),
+                ft.Container(height=3),
                 self.filter_accordion,
                 ft.Container(height=3),
                 self.log_container,
                 ft.Divider(),
                 self.results_container
             ], spacing=0),
-            padding=8,
+            padding=5,
             expand=True
         )
 

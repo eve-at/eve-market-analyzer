@@ -23,6 +23,7 @@ class TradeOpportunitiesScreen:
         self.sort_ascending = False  # Descending order
         self.current_page = 0
         self.rows_per_page = 50
+        self.clicked_rows = set()  # Track clicked type_ids
 
         # Load settings
         import settings
@@ -594,26 +595,40 @@ class TradeOpportunitiesScreen:
             )
 
             # Order: Type ID, Type Name, Profit %, Daily Qty, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders, Daily Orders
+            # Check if this row is clicked
+            is_clicked = opp['type_id'] in self.clicked_rows
+            type_id = opp['type_id']
+            type_name = opp['typeName']
+
+            def create_cell_tap_handler(tid, type_name_val, original_handler=None):
+                """Create a tap handler that toggles highlight and optionally calls original handler"""
+                def handler(e):
+                    self.toggle_row_highlight(tid)
+                    if original_handler:
+                        original_handler(e, tid, type_name_val)
+                return handler
+
             rows.append(
                 ft.DataRow(
                     cells=[
                         ft.DataCell(
                             type_id_text,
-                            on_tap=lambda _, tid=opp['type_id']: self.page.run_task(self.copy_to_clipboard, str(tid), "Type ID")
+                            on_tap=create_cell_tap_handler(type_id, type_name, lambda _, tid, tname: self.page.run_task(self.copy_to_clipboard, str(tid), "Type ID"))
                         ),
                         ft.DataCell(
                             item_name_text,
-                            on_tap=lambda _, name=opp['typeName']: self.page.run_task(self.copy_to_clipboard, name, "Item name")
+                            on_tap=create_cell_tap_handler(type_id, type_name, lambda _, tid, tname: self.page.run_task(self.copy_to_clipboard, tname, "Item name"))
                         ),
-                        ft.DataCell(ft.Text(f"{int(opp['profit'])}%")),
-                        ft.DataCell(ft.Text(f"{opp['daily_volume']:,}" if opp['daily_volume'] is not None else "0")),
-                        ft.DataCell(ft.Text(str(opp['competitors']) if opp['competitors'] is not None else "0")),
-                        ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.0f}")),
-                        ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.0f}")),
-                        ft.DataCell(ft.Text(str(opp['buy_orders_count']))),
-                        ft.DataCell(ft.Text(str(opp['sell_orders_count']))),
-                        ft.DataCell(ft.Text(str(opp['daily_orders']) if opp['daily_orders'] is not None else "0")),
-                    ]
+                        ft.DataCell(ft.Text(f"{int(opp['profit'])}%"), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(f"{opp['daily_volume']:,}" if opp['daily_volume'] is not None else "0"), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(str(opp['competitors']) if opp['competitors'] is not None else "0"), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.0f}"), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.0f}"), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(str(opp['buy_orders_count'])), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(str(opp['sell_orders_count'])), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                        ft.DataCell(ft.Text(str(opp['daily_orders']) if opp['daily_orders'] is not None else "0"), on_tap=lambda _, tid=type_id: self.toggle_row_highlight(tid)),
+                    ],
+                    color=ft.Colors.with_opacity(0.1, ft.Colors.BLUE) if is_clicked else None
                 )
             )
 
@@ -739,6 +754,15 @@ class TradeOpportunitiesScreen:
         )
         self.page.snack_bar.open = True
         self.page.update()
+
+    def toggle_row_highlight(self, type_id):
+        """Toggle row highlight on click"""
+        if type_id in self.clicked_rows:
+            self.clicked_rows.remove(type_id)
+        else:
+            self.clicked_rows.add(type_id)
+        # Refresh the table display
+        self.update_table_display()
 
     def display_opportunities(self, opportunities, min_daily_quantity):
         """Display opportunities in a sortable DataTable"""

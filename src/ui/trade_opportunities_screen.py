@@ -458,7 +458,7 @@ class TradeOpportunitiesScreen:
                     self.status_text.value = f"Found {len(opportunities)} opportunities"
                     self.status_text.color = ft.Colors.GREEN
                     self.export_button.visible = True
-                    self.display_opportunities(opportunities)
+                    self.display_opportunities(opportunities, min_daily_quantity)
                 elif opportunities is not None:
                     self.status_text.value = "No opportunities found with current filters"
                     self.status_text.color = ft.Colors.ORANGE
@@ -487,16 +487,18 @@ class TradeOpportunitiesScreen:
             self.sort_ascending = True
 
         # Define sort keys for each column
-        # Order: Type ID, Type Name, Profit %, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders
+        # Order: Type ID, Type Name, Profit %, Daily Qty, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders, Daily Orders
         sort_keys = [
             lambda x: x['type_id'],
             lambda x: x['typeName'].lower(),
             lambda x: float(x['profit']),
+            lambda x: x['daily_volume'] if x['daily_volume'] is not None else 0,
             lambda x: x['competitors'] if x['competitors'] is not None else 0,
             lambda x: float(x['max_buy_price']),
             lambda x: float(x['min_sell_price']),
             lambda x: x['buy_orders_count'],
             lambda x: x['sell_orders_count'],
+            lambda x: x['daily_orders'] if x['daily_orders'] is not None else 0,
         ]
 
         # Sort the data
@@ -527,7 +529,7 @@ class TradeOpportunitiesScreen:
         total_pages = (len(self.opportunities_data) - 1) // self.rows_per_page + 1
 
         # Create DataTable columns with sort callbacks
-        # Order: Type ID, Type Name, Profit %, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders
+        # Order: Type ID, Type Name, Profit %, Daily Qty, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders, Daily Orders
         columns = [
             ft.DataColumn(
                 ft.Text("Type ID", weight=ft.FontWeight.BOLD),
@@ -543,29 +545,39 @@ class TradeOpportunitiesScreen:
                 on_sort=lambda _: self.sort_opportunities(2)
             ),
             ft.DataColumn(
-                ft.Text("Competitors", weight=ft.FontWeight.BOLD),
+                ft.Text("Daily Qty", weight=ft.FontWeight.BOLD),
                 numeric=True,
                 on_sort=lambda _: self.sort_opportunities(3)
             ),
             ft.DataColumn(
-                ft.Text("Buy Price", weight=ft.FontWeight.BOLD),
+                ft.Text("Competitors", weight=ft.FontWeight.BOLD),
                 numeric=True,
                 on_sort=lambda _: self.sort_opportunities(4)
             ),
             ft.DataColumn(
-                ft.Text("Sell Price", weight=ft.FontWeight.BOLD),
+                ft.Text("Buy Price", weight=ft.FontWeight.BOLD),
                 numeric=True,
                 on_sort=lambda _: self.sort_opportunities(5)
             ),
             ft.DataColumn(
-                ft.Text("Buy Orders", weight=ft.FontWeight.BOLD),
+                ft.Text("Sell Price", weight=ft.FontWeight.BOLD),
                 numeric=True,
                 on_sort=lambda _: self.sort_opportunities(6)
             ),
             ft.DataColumn(
-                ft.Text("Sell Orders", weight=ft.FontWeight.BOLD),
+                ft.Text("Buy Orders", weight=ft.FontWeight.BOLD),
                 numeric=True,
                 on_sort=lambda _: self.sort_opportunities(7)
+            ),
+            ft.DataColumn(
+                ft.Text("Sell Orders", weight=ft.FontWeight.BOLD),
+                numeric=True,
+                on_sort=lambda _: self.sort_opportunities(8)
+            ),
+            ft.DataColumn(
+                ft.Text("Daily Orders", weight=ft.FontWeight.BOLD),
+                numeric=True,
+                on_sort=lambda _: self.sort_opportunities(9)
             ),
         ]
 
@@ -574,16 +586,14 @@ class TradeOpportunitiesScreen:
         for opp in page_data:
             type_id_text = ft.Text(
                 str(opp['type_id']),
-                color=ft.Colors.BLUE,
-                style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE)
+                color=ft.Colors.BLUE
             )
             item_name_text = ft.Text(
                 opp['typeName'],
-                color=ft.Colors.BLUE,
-                style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE)
+                color=ft.Colors.BLUE
             )
 
-            # Order: Type ID, Type Name, Profit %, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders
+            # Order: Type ID, Type Name, Profit %, Daily Qty, Competitors, Buy Price, Sell Price, Buy Orders, Sell Orders, Daily Orders
             rows.append(
                 ft.DataRow(
                     cells=[
@@ -596,11 +606,13 @@ class TradeOpportunitiesScreen:
                             on_tap=lambda _, name=opp['typeName']: self.page.run_task(self.copy_to_clipboard, name, "Item name")
                         ),
                         ft.DataCell(ft.Text(f"{int(opp['profit'])}%")),
+                        ft.DataCell(ft.Text(f"{opp['daily_volume']:,}" if opp['daily_volume'] is not None else "0")),
                         ft.DataCell(ft.Text(str(opp['competitors']) if opp['competitors'] is not None else "0")),
                         ft.DataCell(ft.Text(f"{float(opp['max_buy_price']):,.0f}")),
                         ft.DataCell(ft.Text(f"{float(opp['min_sell_price']):,.0f}")),
                         ft.DataCell(ft.Text(str(opp['buy_orders_count']))),
                         ft.DataCell(ft.Text(str(opp['sell_orders_count']))),
+                        ft.DataCell(ft.Text(str(opp['daily_orders']) if opp['daily_orders'] is not None else "0")),
                     ]
                 )
             )
@@ -615,8 +627,8 @@ class TradeOpportunitiesScreen:
             horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
             heading_row_color=ft.Colors.GREY_200,
             heading_row_height=25,
-            data_row_min_height=20,
-            data_row_max_height=20,
+            data_row_min_height=30,
+            data_row_max_height=30,
             sort_column_index=self.sort_column_index,
             sort_ascending=self.sort_ascending,
         )
@@ -649,8 +661,6 @@ class TradeOpportunitiesScreen:
             ft.Container(height=10),
             ft.Container(
                 content=ft.Row([data_table], scroll=ft.ScrollMode.AUTO, expand=True),
-                border=ft.border.all(1, ft.Colors.GREY_400),
-                border_radius=5,
                 padding=10,
                 expand=True,
             ),
@@ -730,10 +740,16 @@ class TradeOpportunitiesScreen:
         self.page.snack_bar.open = True
         self.page.update()
 
-    def display_opportunities(self, opportunities):
+    def display_opportunities(self, opportunities, min_daily_quantity):
         """Display opportunities in a sortable DataTable"""
-        # Store opportunities data
-        self.opportunities_data = opportunities
+        # Filter opportunities by daily_volume >= min_daily_quantity
+        filtered_opportunities = [
+            opp for opp in opportunities
+            if opp.get('daily_volume') is not None and opp['daily_volume'] >= min_daily_quantity
+        ]
+
+        # Store filtered opportunities data
+        self.opportunities_data = filtered_opportunities
 
         # Sort by default column (profit) in descending order
         sort_keys = [

@@ -126,7 +126,8 @@ class TradeOpportunitiesScreen:
                 label=group['marketGroupName'],
                 value=False,
                 data=group_id,
-                on_change=lambda e, gid=group_id: self.on_market_group_changed(e, gid)
+                on_change=lambda e, gid=group_id: self.on_market_group_changed(e, gid),
+                margin=-8
             )
             self.market_group_checkboxes[group_id] = checkbox
             market_group_checkboxes_controls.append(checkbox)

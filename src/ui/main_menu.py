@@ -30,10 +30,10 @@ class MainMenu:
                 "key": "trade_opportunities"
             },
             {
-                "title": "Settings",
-                "icon": ft.Icons.SETTINGS,
-                "description": "Configure application settings",
-                "key": "settings"
+                "title": "Accounting Tool",
+                "icon": ft.Icons.CALCULATE,
+                "description": "Track transactions and calculate profits",
+                "key": "accounting_tool"
             }
         ]
 

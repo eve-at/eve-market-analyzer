@@ -10,9 +10,10 @@ from src.database.models import (
 class SettingsScreen:
     """Application settings screen"""
 
-    def __init__(self, page: ft.Page, on_back_callback, marketlogs_dir=""):
+    def __init__(self, page: ft.Page, on_back_callback, on_logout_callback=None, marketlogs_dir=""):
         self.page = page
         self.on_back_callback = on_back_callback
+        self.on_logout_callback = on_logout_callback
         self.current_character = None
         self.eve_sso = EVESSO()
 
@@ -53,14 +54,17 @@ class SettingsScreen:
             fit=ft.BoxFit.COVER
         )
         self.character_name_text = ft.Text(size=16, weight=ft.FontWeight.W_500)
+        self.character_id_text = ft.Text(size=12, color=ft.Colors.GREY_600)
 
         if self.current_character:
             self.character_name_text.value = self.current_character.get('character_name')
+            self.character_id_text.value = f"ID: {self.current_character.get('character_id')}"
             self.character_info_row.visible = True
             self.character_info_row.controls = [
                 self.character_avatar,
                 ft.Column([
                     self.character_name_text,
+                    self.character_id_text,
                     ft.Text("Logged in", size=12, color=ft.Colors.GREEN)
                 ], spacing=2)
             ]
@@ -142,21 +146,12 @@ class SettingsScreen:
             )
         )
 
-        self.back_button = ft.TextButton(
-            "← Back to Menu",
-            on_click=lambda e: self.on_back_callback()
-        )
-
         # Status text
         self.status_text = ft.Text("", size=14)
 
         # Main container
         self.container = ft.Container(
             content=ft.Column([
-                ft.Row([
-                    self.back_button
-                ], alignment=ft.MainAxisAlignment.START),
-                ft.Container(height=10),
                 ft.Text(
                     "Settings",
                     size=28,
@@ -246,11 +241,13 @@ class SettingsScreen:
             self.current_character = character_data
             self.character_avatar.src = character_data.get('character_portrait_url')
             self.character_name_text.value = character_data.get('character_name')
+            self.character_id_text.value = f"ID: {character_data.get('character_id')}"
             self.character_info_row.visible = True
             self.character_info_row.controls = [
                 self.character_avatar,
                 ft.Column([
                     self.character_name_text,
+                    self.character_id_text,
                     ft.Text("Logged in", size=12, color=ft.Colors.GREEN)
                 ], spacing=2)
             ]
@@ -282,6 +279,10 @@ class SettingsScreen:
 
         self.status_text.value = "Logged out successfully"
         self.status_text.color = ft.Colors.ORANGE
+
+        # Call logout callback to refresh app bar
+        if self.on_logout_callback:
+            self.on_logout_callback()
 
         self.page.update()
 

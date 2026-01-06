@@ -7,6 +7,7 @@ from .main_menu import MainMenu
 from .trade_opportunities_screen import TradeOpportunitiesScreen
 from .settings_screen import SettingsScreen
 from .app_bar import AppBar
+from .accounting_tool_screen import AccountingToolScreen
 
 __all__ = [
     'AutoCompleteField',
@@ -16,5 +17,6 @@ __all__ = [
     'MainMenu',
     'TradeOpportunitiesScreen',
     'SettingsScreen',
-    'AppBar'
+    'AppBar',
+    'AccountingToolScreen'
 ]

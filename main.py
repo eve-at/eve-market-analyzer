@@ -6,7 +6,8 @@ from src.ui import (
     MainMenu,
     TradeOpportunitiesScreen,
     SettingsScreen,
-    AppBar
+    AppBar,
+    AccountingToolScreen
 )
 from src.app import EVEMarketApp
 from src.database import load_regions_and_items, create_tables, get_setting
@@ -31,6 +32,7 @@ class MainApp:
         self.trade_opportunities_screen = None
         self.settings_screen = None
         self.update_data_screen = None
+        self.accounting_tool_screen = None
 
         # App bar
         self.app_bar = None
@@ -84,9 +86,13 @@ class MainApp:
         """Show main menu"""
         self.page.controls.clear()
 
-        # Create app bar if not exists
-        if not self.app_bar:
-            self.app_bar = AppBar(self.page, on_settings_click=self.show_settings)
+        # Create app bar (main menu doesn't show back button)
+        self.app_bar = AppBar(
+            self.page,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=False
+        )
 
         self.main_menu = MainMenu(
             page=self.page,
@@ -109,12 +115,21 @@ class MainApp:
             self.show_market_history()
         elif menu_key == "trade_opportunities":
             self.show_trade_opportunities()
-        elif menu_key == "settings":
-            self.show_settings()
+        elif menu_key == "accounting_tool":
+            self.show_accounting_tool()
 
     def show_update_data_screen(self):
         """Show update static data screen"""
         self.page.controls.clear()
+
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
 
         # Reuse InitScreen for data import
         self.update_data_screen = InitScreen(
@@ -128,17 +143,8 @@ class MainApp:
         self.update_data_screen.import_button.text = "Update Static Data"
         self.update_data_screen.progress_ring.visible = False
 
-        # Add back button
-        back_button = ft.TextButton(
-            "← Back to Menu",
-            on_click=lambda e: self.show_main_menu()
-        )
-
         container = ft.Container(
-            content=ft.Column([
-                ft.Row([back_button], alignment=ft.MainAxisAlignment.START, spacing=10),
-                self.update_data_screen.build()
-            ]),
+            content=self.update_data_screen.build(),
             expand=True
         )
 
@@ -161,26 +167,19 @@ class MainApp:
         """Show market history screen"""
         self.page.controls.clear()
 
-        # Create back button
-        back_button = ft.TextButton(
-            "← Back to Menu",
-            on_click=lambda e: self.on_market_history_back()
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.on_market_history_back
         )
 
-        # Create container for market app with back button
-        container = ft.Container(
-            content=ft.Column([
-                ft.Row([back_button], alignment=ft.MainAxisAlignment.START, spacing=10),
-                ft.Container(height=10)
-            ]),
-            expand=False
-        )
-
-        # Add app bar and container
+        # Add app bar
         self.page.add(
             ft.Column([
-                self.app_bar.get(),
-                container
+                self.app_bar.get()
             ], spacing=0, expand=False)
         )
 
@@ -198,6 +197,15 @@ class MainApp:
     def show_trade_opportunities(self):
         """Show trade opportunities screen"""
         self.page.controls.clear()
+
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
 
         self.trade_opportunities_screen = TradeOpportunitiesScreen(
             page=self.page,
@@ -217,17 +225,65 @@ class MainApp:
         """Show settings screen"""
         self.page.controls.clear()
 
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
+
         # Load marketlogs_dir from database or use default from settings.py
         marketlogs_dir = get_setting('marketlogs_dir', MARKETLOGS_DIR)
 
         self.settings_screen = SettingsScreen(
             page=self.page,
             on_back_callback=self.show_main_menu,
+            on_logout_callback=self.on_logout,
             marketlogs_dir=marketlogs_dir
         )
 
-        self.page.add(self.settings_screen.build())
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.settings_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
         self.page.update()
+
+    def show_accounting_tool(self):
+        """Show accounting tool screen"""
+        self.page.controls.clear()
+
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
+
+        self.accounting_tool_screen = AccountingToolScreen(
+            page=self.page,
+            on_back_callback=self.show_main_menu
+        )
+
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.accounting_tool_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
+        self.page.update()
+
+    def on_logout(self):
+        """Handle logout - refresh app bar"""
+        if self.app_bar:
+            self.app_bar.refresh()
+            # Update the page to reflect app bar changes
+            self.page.update()
 
 
 def main(page: ft.Page):

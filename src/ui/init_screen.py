@@ -71,7 +71,7 @@ class InitScreen:
             content=ft.Column([
                 ft.Container(height=50),
                 ft.Text(
-                    "EVE Online Market History",
+                    "EVE Online Market Helper",
                     size=32,
                     weight=ft.FontWeight.BOLD,
                     text_align=ft.TextAlign.CENTER

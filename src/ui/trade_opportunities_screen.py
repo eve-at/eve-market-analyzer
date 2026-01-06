@@ -174,11 +174,6 @@ class TradeOpportunitiesScreen:
             )
         )
 
-        self.back_button = ft.TextButton(
-            "← Back to Menu",
-            on_click=lambda e: self.on_back_callback()
-        )
-
         # Status text
         self.status_text = ft.Text("Select a region to begin", size=12, color=ft.Colors.GREY_600)
 
@@ -270,10 +265,6 @@ class TradeOpportunitiesScreen:
         # Main container
         self.container = ft.Container(
             content=ft.Column([
-                ft.Row([
-                    self.back_button
-                ], alignment=ft.MainAxisAlignment.START),
-                ft.Container(height=2),
                 ft.Text(
                     "Trade Opportunities Finder",
                     size=18,

@@ -262,7 +262,7 @@ class MainApp:
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,
-            on_back_click=self.show_main_menu
+            on_back_click=self.on_accounting_tool_back
         )
 
         self.accounting_tool_screen = AccountingToolScreen(
@@ -277,6 +277,15 @@ class MainApp:
             ], spacing=0, expand=True)
         )
         self.page.update()
+
+        # Start file monitoring
+        self.accounting_tool_screen.start_file_monitoring()
+
+    def on_accounting_tool_back(self):
+        """Handle back from accounting tool"""
+        if self.accounting_tool_screen:
+            self.accounting_tool_screen.stop_file_monitoring()
+        self.show_main_menu()
 
     def on_logout(self):
         """Handle logout - refresh app bar"""

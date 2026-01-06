@@ -95,8 +95,13 @@ class AccountingToolScreen:
         )
 
         # Competitors count
-        self.competitors_text = ft.Text(
-            "Competitors: -",
+        self.competitors_sell_text = ft.Text(
+            "Competitors (Sell): -",
+            size=14,
+            weight=ft.FontWeight.W_500
+        )
+        self.competitors_buy_text = ft.Text(
+            "Competitors (Buy): -",
             size=14,
             weight=ft.FontWeight.W_500
         )
@@ -182,7 +187,11 @@ class AccountingToolScreen:
                 ft.Container(height=15),
 
                 # Competitors
-                self.competitors_text,
+                ft.Text("Competitors:", size=14, weight=ft.FontWeight.W_500),
+                ft.Column([
+                    self.competitors_sell_text,
+                    self.competitors_buy_text
+                ], spacing=2),
                 ft.Container(height=15),
 
                 # Profit
@@ -207,6 +216,10 @@ class AccountingToolScreen:
     def on_price_type_changed(self, e):
         """Handle price type radio change"""
         self.update_calculations()
+        # Copy new price to clipboard
+        async def copy_async():
+            await self.copy_price_to_clipboard()
+        self.page.run_task(copy_async)
 
     def on_export_file_created(self, file_path, region_name, item_name):
         """Callback when new export file is detected"""
@@ -226,7 +239,7 @@ class AccountingToolScreen:
 
             # Update UI
             async def update_ui():
-                self.update_ui_with_data()
+                await self.update_ui_with_data()
                 self.page.update()
 
             self.page.run_task(update_ui)
@@ -234,7 +247,7 @@ class AccountingToolScreen:
         except Exception as e:
             print(f"Error processing export file: {e}")
 
-    def update_ui_with_data(self):
+    async def update_ui_with_data(self):
         """Update UI elements with current data"""
         # Update item info
         self.item_name_text.value = self.current_item_name or "Unknown Item"
@@ -257,7 +270,7 @@ class AccountingToolScreen:
         self.update_calculations()
 
         # Copy to clipboard
-        self.copy_price_to_clipboard()
+        await self.copy_price_to_clipboard()
 
     def update_calculations(self):
         """Update all calculated fields"""
@@ -297,11 +310,11 @@ class AccountingToolScreen:
         self.broker_fee_buy_isk_text.value = f"Broker Fee (buy): {profit_data['broker_fee_buy']:,.2f} ISK"
         self.sales_tax_isk_text.value = f"Sales Tax: {profit_data['sales_tax']:,.2f} ISK"
 
-        # Update competitors count
-        is_sell = self.price_to_copy_radio.value == "sell"
-        orders = self.current_sell_orders if is_sell else self.current_buy_orders
-        competitors = count_competitors(orders, is_sell)
-        self.competitors_text.value = f"Competitors: {competitors}"
+        # Update competitors count for both sell and buy
+        sell_competitors = count_competitors(self.current_sell_orders, is_sell_order=True)
+        buy_competitors = count_competitors(self.current_buy_orders, is_sell_order=False)
+        self.competitors_sell_text.value = f"Competitors (Sell): {sell_competitors}"
+        self.competitors_buy_text.value = f"Competitors (Buy): {buy_competitors}"
 
         self.page.update()
 

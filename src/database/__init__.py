@@ -7,7 +7,9 @@ from .models import (
     save_setting,
     get_character,
     save_character,
-    get_current_character_id
+    get_current_character_id,
+    create_character_history_table,
+    save_character_order_history
 )
 
 __all__ = [
@@ -20,5 +22,7 @@ __all__ = [
     'save_setting',
     'get_character',
     'save_character',
-    'get_current_character_id'
+    'get_current_character_id',
+    'create_character_history_table',
+    'save_character_order_history'
 ]

@@ -219,3 +219,143 @@ def get_current_character_id():
     """Get the currently logged-in character ID from settings"""
     character_id = get_setting('current_character_id')
     return int(character_id) if character_id else None
+
+
+def create_character_history_table(character_id):
+    """Create character order history table if it doesn't exist
+
+    Args:
+        character_id: Character ID to create history table for
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor()
+
+            table_name = f"character_history_{character_id}"
+
+            # Create character history table
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{table_name}` (
+                    order_id BIGINT PRIMARY KEY,
+                    duration INT NOT NULL,
+                    escrow DECIMAL(20,2) NOT NULL,
+                    is_buy_order BOOLEAN NOT NULL,
+                    is_corporation BOOLEAN NOT NULL,
+                    issued DATETIME NOT NULL,
+                    location_id BIGINT NOT NULL,
+                    min_volume INT NOT NULL,
+                    price DECIMAL(20,2) NOT NULL,
+                    range_type VARCHAR(50) NOT NULL,
+                    region_id INT NOT NULL,
+                    state VARCHAR(50) NOT NULL,
+                    type_id INT NOT NULL,
+                    volume_remain INT NOT NULL,
+                    volume_total INT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    
+                    volume_effective INT NOT NULL,
+                    exhausted BOOLEAN NOT NULL DEFAULT FALSE,
+                    
+                    INDEX idx_type_id (type_id),
+                    INDEX idx_issued (issued),
+                    INDEX idx_state (state)
+                )
+            """)
+            print(f"Table '{table_name}' created or already exists")
+
+            connection.commit()
+            return True
+
+    except Error as e:
+        print(f"Database error while creating character history table: {e}")
+        return False
+    except Exception as e:
+        print(f"Error while creating character history table: {e}")
+        return False
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def save_character_order_history(character_id, orders):
+    """Save character order history to database
+
+    Args:
+        character_id: Character ID
+        orders: List of order dictionaries from ESI API
+
+    Returns:
+        tuple: (inserted_count, skipped_count)
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor()
+
+            table_name = f"character_history_{character_id}"
+            inserted_count = 0
+            skipped_count = 0
+
+            for order in orders:
+                try:
+                    # Use INSERT IGNORE to skip duplicates
+                    # Set default values for optional fields
+                    cursor.execute(f"""
+                        INSERT IGNORE INTO `{table_name}`
+                        (order_id, duration, escrow, is_buy_order, is_corporation, issued,
+                         location_id, min_volume, price, range_type, region_id, state,
+                         type_id, volume_remain, volume_total)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        order['order_id'],
+                        order['duration'],
+                        order.get('escrow', 0),  # Default to 0 if missing
+                        order.get('is_buy_order', False),  # Default to False if missing
+                        order['is_corporation'],
+                        order['issued'],
+                        order['location_id'],
+                        order.get('min_volume', 0),  # Default to 0 if missing
+                        order['price'],
+                        order['range'],
+                        order['region_id'],
+                        order['state'],
+                        order['type_id'],
+                        order['volume_remain'],
+                        order['volume_total']
+                    ))
+
+                    # Check if row was inserted
+                    if cursor.rowcount > 0:
+                        inserted_count += 1
+                    else:
+                        skipped_count += 1
+
+                except Error as e:
+                    print(f"Error inserting order {order.get('order_id')}: {e}")
+                    skipped_count += 1
+
+            connection.commit()
+            return (inserted_count, skipped_count)
+
+    except Error as e:
+        print(f"Database error while saving order history: {e}")
+        return (0, 0)
+    except Exception as e:
+        print(f"Error while saving order history: {e}")
+        return (0, 0)
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()

@@ -1,9 +1,12 @@
 """Character screen UI component"""
 import flet as ft
+from datetime import datetime
+from threading import Thread
 from src.auth.eve_sso import EVESSO
+from src.auth.esi_api import ESIAPI
 from src.database.models import (
     get_character, save_character, get_current_character_id,
-    save_setting
+    save_setting, create_character_history_table, save_character_order_history
 )
 
 
@@ -21,6 +24,8 @@ class CharacterScreen:
         character_id = get_current_character_id()
         if character_id:
             self.current_character = get_character(character_id)
+            # Create history table for this character if it doesn't exist
+            create_character_history_table(character_id)
 
         # Load settings from database or use defaults
         broker_fee_sell = "3.00"
@@ -120,6 +125,33 @@ class CharacterScreen:
         # Status text
         self.status_text = ft.Text("", size=14)
 
+        # Update Historical Orders button
+        self.update_orders_button = ft.ElevatedButton(
+            "Update Historical Orders",
+            on_click=self.on_update_orders,
+            visible=bool(self.current_character),
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.GREEN,
+                color=ft.Colors.WHITE,
+                padding=ft.Padding(20, 10, 20, 10)
+            )
+        )
+
+        # Log container for import progress
+        self.log_column = ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            auto_scroll=True,
+            height=300
+        )
+
+        self.log_container = ft.Container(
+            content=self.log_column,
+            border=ft.border.all(1, ft.Colors.GREY_400),
+            border_radius=5,
+            padding=10,
+            visible=False
+        )
+
         # EVE Online Account column
         eve_account_column = ft.Column([
             ft.Text(
@@ -161,7 +193,14 @@ class CharacterScreen:
                     trading_settings_column
                 ], spacing=0, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=10),
-                self.status_text
+                self.status_text,
+                ft.Container(height=20),
+                # Update Historical Orders section
+                ft.Row([
+                    self.update_orders_button
+                ], alignment=ft.MainAxisAlignment.START),
+                ft.Container(height=10),
+                self.log_container
             ], spacing=5, scroll=ft.ScrollMode.AUTO),
             padding=20,
             expand=True
@@ -185,6 +224,9 @@ class CharacterScreen:
             # Save as current character
             save_setting('current_character_id', str(character_data['character_id']))
 
+            # Create history table for this character if it doesn't exist
+            create_character_history_table(character_data['character_id'])
+
             # Update UI
             self.current_character = character_data
             self.character_avatar.src = character_data.get('character_portrait_url')
@@ -201,6 +243,7 @@ class CharacterScreen:
             ]
             self.eve_login_button.visible = False
             self.logout_button.visible = True
+            self.update_orders_button.visible = True
 
             self.status_text.value = f"Successfully logged in as {character_data.get('character_name')}"
             self.status_text.color = ft.Colors.GREEN
@@ -220,6 +263,8 @@ class CharacterScreen:
         self.character_info_row.visible = False
         self.eve_login_button.visible = True
         self.logout_button.visible = False
+        self.update_orders_button.visible = False
+        self.log_container.visible = False
 
         # Reset avatar to default
         self.character_avatar.src = "static/img/default_avatar.svg"
@@ -269,6 +314,142 @@ class CharacterScreen:
             self.status_text.color = ft.Colors.RED
 
         self.page.update()
+
+    def on_update_orders(self, e):
+        """Handle Update Historical Orders button click"""
+        if not self.current_character:
+            self.status_text.value = "Please log in first"
+            self.status_text.color = ft.Colors.ORANGE
+            self.page.update()
+            return
+
+        # Disable button during update
+        self.update_orders_button.disabled = True
+        self.log_column.controls.clear()
+        self.log_container.visible = True
+        self.page.update()
+
+        # Run import in background thread
+        thread = Thread(target=self._run_orders_import, daemon=True)
+        thread.start()
+
+    def _run_orders_import(self):
+        """Run orders import in background thread"""
+        def log_callback(message):
+            """Callback to display log messages"""
+            async def add_log():
+                self.log_column.controls.append(
+                    ft.Text(
+                        message,
+                        size=12,
+                        color=ft.Colors.BLACK,
+                        selectable=True
+                    )
+                )
+                self.page.update()
+
+            self.page.run_task(add_log)
+
+        try:
+            character_id = self.current_character['character_id']
+            access_token = self.current_character.get('access_token')
+            refresh_token = self.current_character.get('refresh_token')
+            token_expiry = self.current_character.get('token_expiry')
+
+            log_callback(f"Starting orders import for character ID {character_id}...")
+
+            # Check if token needs refresh
+            esi_api = ESIAPI()
+            if not access_token or not token_expiry or datetime.now() >= token_expiry:
+                log_callback("Access token expired or missing, refreshing...")
+
+                if not refresh_token:
+                    log_callback("ERROR: No refresh token available. Please log in again.")
+                    async def update_ui():
+                        self.update_orders_button.disabled = False
+                        self.page.update()
+                    self.page.run_task(update_ui)
+                    return
+
+                token_data = esi_api.refresh_access_token(refresh_token)
+                if not token_data:
+                    log_callback("ERROR: Failed to refresh access token. Please log in again.")
+                    async def update_ui():
+                        self.update_orders_button.disabled = False
+                        self.page.update()
+                    self.page.run_task(update_ui)
+                    return
+
+                access_token = token_data['access_token']
+
+                # Save updated token to database
+                save_character({
+                    'character_id': character_id,
+                    'character_name': self.current_character['character_name'],
+                    'access_token': access_token,
+                    'token_expiry': token_data['token_expiry']
+                })
+
+                log_callback("Access token refreshed successfully")
+
+            # Fetch orders with pagination
+            log_callback("Fetching orders history from ESI API...")
+            page = 1
+            total_orders = 0
+            total_inserted = 0
+            total_skipped = 0
+
+            while True:
+                log_callback(f"Fetching page {page}...")
+
+                orders, has_more = esi_api.get_character_orders_history(
+                    character_id,
+                    access_token,
+                    page
+                )
+
+                if orders is None:
+                    log_callback(f"ERROR: Failed to fetch page {page}")
+                    break
+
+                if not orders:
+                    log_callback("No more orders to fetch")
+                    break
+
+                log_callback(f"Received {len(orders)} orders from page {page}")
+                total_orders += len(orders)
+
+                # Save orders to database
+                log_callback(f"Saving orders to database...")
+                inserted, skipped = save_character_order_history(character_id, orders)
+                total_inserted += inserted
+                total_skipped += skipped
+
+                log_callback(f"Page {page}: Inserted {inserted} new orders, skipped {skipped} duplicates")
+
+                if not has_more:
+                    log_callback("All pages fetched")
+                    break
+
+                page += 1
+
+            log_callback("=" * 50)
+            log_callback(f"Import completed!")
+            log_callback(f"Total orders fetched: {total_orders}")
+            log_callback(f"New orders inserted: {total_inserted}")
+            log_callback(f"Duplicates skipped: {total_skipped}")
+
+        except Exception as e:
+            log_callback(f"ERROR: {str(e)}")
+            import traceback
+            log_callback(traceback.format_exc())
+
+        finally:
+            # Re-enable button
+            async def update_ui():
+                self.update_orders_button.disabled = False
+                self.page.update()
+            self.page.run_task(update_ui)
 
     def build(self):
         """Build and return the UI container"""

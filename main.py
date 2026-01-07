@@ -206,6 +206,7 @@ class MainApp:
         # Create app bar with back button
         self.app_bar = AppBar(
             self.page,
+            on_character_click=self.show_character,
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,
@@ -292,6 +293,7 @@ class MainApp:
         # Create app bar with back button
         self.app_bar = AppBar(
             self.page,
+            on_character_click=self.show_character,
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,

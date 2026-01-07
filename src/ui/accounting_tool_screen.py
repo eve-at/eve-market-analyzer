@@ -53,6 +53,22 @@ class AccountingToolScreen:
             color=ft.Colors.GREY_600
         )
 
+        # Instruction text (hidden after file detection)
+        self.instruction_text = ft.Text(
+            "Press 'Export to File' button on the item page in the market",
+            size=12,
+            color=ft.Colors.BLUE_700,
+            italic=True,
+            visible=True
+        )
+
+        # Subtitle text (shown next to title)
+        self.subtitle_text = ft.Text(
+            "Track transactions and calculate profits",
+            size=14,
+            color=ft.Colors.GREY_700
+        )
+
         # Price fields
         self.min_sell_field = ft.TextField(
             label="Min. Sell Price",
@@ -79,22 +95,6 @@ class AccountingToolScreen:
             on_change=self.on_price_type_changed
         )
 
-        # Settings display
-        self.broker_fee_sell_text = ft.Text(
-            f"Broker Fee (sell): {self.broker_fee_sell}%",
-            size=12,
-            color=ft.Colors.GREY_700
-        )
-        self.broker_fee_buy_text = ft.Text(
-            f"Broker Fee (buy): {self.broker_fee_buy}%",
-            size=12,
-            color=ft.Colors.GREY_700
-        )
-        self.sales_tax_text = ft.Text(
-            f"Sales Tax: {self.sales_tax}%",
-            size=12,
-            color=ft.Colors.GREY_700
-        )
 
         # Competitors count
         self.competitors_sell_text = ft.Text(
@@ -110,31 +110,31 @@ class AccountingToolScreen:
 
         # Profit display
         self.profit_percent_text = ft.Text(
-            "Profit: -%",
-            size=16,
+            "-%",
+            size=32,
             weight=ft.FontWeight.BOLD,
             color=ft.Colors.GREEN
         )
         self.profit_isk_text = ft.Text(
-            "Profit: - ISK",
+            "- ISK",
             size=16,
             weight=ft.FontWeight.BOLD,
             color=ft.Colors.GREEN
         )
 
-        # Fees in ISK
+        # Fees in ISK (with percentages integrated)
         self.broker_fee_sell_isk_text = ft.Text(
-            "Broker Fee (sell): - ISK",
+            f"Broker Fee (sell) ({self.broker_fee_sell}%): - ISK",
             size=12,
             color=ft.Colors.GREY_600
         )
         self.broker_fee_buy_isk_text = ft.Text(
-            "Broker Fee (buy): - ISK",
+            f"Broker Fee (buy) ({self.broker_fee_buy}%): - ISK",
             size=12,
             color=ft.Colors.GREY_600
         )
         self.sales_tax_isk_text = ft.Text(
-            "Sales Tax: - ISK",
+            f"Sales Tax ({self.sales_tax}%): - ISK",
             size=12,
             color=ft.Colors.GREY_600
         )
@@ -142,24 +142,20 @@ class AccountingToolScreen:
         # Main container
         self.container = ft.Container(
             content=ft.Column([
-                ft.Text(
-                    "Accounting Tool",
-                    size=28,
-                    weight=ft.FontWeight.BOLD
-                ),
-                ft.Container(height=10),
-                ft.Text(
-                    "Track transactions and calculate profits",
-                    size=14,
-                    color=ft.Colors.GREY_700
-                ),
+                # Title and subtitle on same line
+                ft.Row([
+                    ft.Text(
+                        "Accounting Tool",
+                        size=28,
+                        weight=ft.FontWeight.BOLD
+                    ),
+                    ft.Container(width=20),
+                    self.subtitle_text
+                ], alignment=ft.MainAxisAlignment.START),
                 ft.Container(height=5),
-                ft.Text(
-                    "Press 'Export to File' button on the item page in the market",
-                    size=12,
-                    color=ft.Colors.BLUE_700,
-                    italic=True
-                ),
+
+                # Instruction text (hidden after file detection)
+                self.instruction_text,
                 ft.Container(height=20),
 
                 # Item info
@@ -179,35 +175,26 @@ class AccountingToolScreen:
                 self.price_to_copy_radio,
                 ft.Container(height=15),
 
-                # Settings
-                ft.Text("Trading Settings:", size=14, weight=ft.FontWeight.W_500),
-                ft.Column([
-                    self.broker_fee_sell_text,
-                    self.broker_fee_buy_text,
-                    self.sales_tax_text
-                ], spacing=2),
-                ft.Container(height=15),
-
-                # Competitors
-                ft.Text("Competitors:", size=14, weight=ft.FontWeight.W_500),
-                ft.Column([
-                    self.competitors_sell_text,
-                    self.competitors_buy_text
-                ], spacing=2),
-                ft.Container(height=15),
-
                 # Profit
                 ft.Text("Profit Analysis:", size=14, weight=ft.FontWeight.W_500),
                 self.profit_percent_text,
                 self.profit_isk_text,
                 ft.Container(height=10),
 
-                # Fees breakdown
+                # Fees breakdown (with percentages integrated)
                 ft.Text("Fees Breakdown:", size=12, weight=ft.FontWeight.W_500),
                 ft.Column([
                     self.broker_fee_sell_isk_text,
                     self.broker_fee_buy_isk_text,
                     self.sales_tax_isk_text
+                ], spacing=2),
+                ft.Container(height=15),
+
+                # Competitors (moved to bottom)
+                ft.Text("Competitors:", size=14, weight=ft.FontWeight.W_500),
+                ft.Column([
+                    self.competitors_sell_text,
+                    self.competitors_buy_text
                 ], spacing=2)
 
             ], spacing=5, scroll=ft.ScrollMode.AUTO),
@@ -278,20 +265,23 @@ class AccountingToolScreen:
         # Capture current price type to avoid race condition
         current_price_type = self.price_to_copy_radio.value
 
+        # Hide instruction text after file is detected
+        self.instruction_text.visible = False
+
         # Update item info
         self.item_name_text.value = self.current_item_name or "Unknown Item"
         self.type_id_text.value = f"Type ID: {self.current_type_id}" if self.current_type_id else "Type ID: -"
 
-        # Calculate next ticks
+        # Calculate next ticks (show without decimals in display, but keep decimals for clipboard)
         if self.current_min_sell is not None:
             next_sell = get_next_sell_tick(self.current_min_sell)
-            self.min_sell_field.value = f"{next_sell:,.2f}"
+            self.min_sell_field.value = f"{int(next_sell):,}"
         else:
             self.min_sell_field.value = "N/A"
 
         if self.current_max_buy is not None:
             next_buy = get_next_buy_tick(self.current_max_buy)
-            self.max_buy_field.value = f"{next_buy:,.2f}"
+            self.max_buy_field.value = f"{int(next_buy):,}"
         else:
             self.max_buy_field.value = "N/A"
 
@@ -319,31 +309,32 @@ class AccountingToolScreen:
             self.sales_tax
         )
 
-        # Update profit display
-        self.profit_percent_text.value = f"Profit: {profit_data['profit_percent']:,.2f}%"
-        self.profit_isk_text.value = f"Profit: {profit_data['profit_isk']:,.2f} ISK"
+        # Update profit display (no decimals, enlarged percentage)
+        self.profit_percent_text.value = f"{profit_data['profit_percent']:.0f}%"
+        self.profit_isk_text.value = f"{int(profit_data['profit_isk']):,} ISK"
 
-        # Set color based on profit
-        if profit_data['profit_isk'] > 0:
+        # Set color based on profit percentage (green if >= 5%, red if < 5%)
+        if profit_data['profit_percent'] >= 5:
             self.profit_percent_text.color = ft.Colors.GREEN
             self.profit_isk_text.color = ft.Colors.GREEN
-        elif profit_data['profit_isk'] < 0:
+        else:
             self.profit_percent_text.color = ft.Colors.RED
             self.profit_isk_text.color = ft.Colors.RED
-        else:
-            self.profit_percent_text.color = ft.Colors.GREY
-            self.profit_isk_text.color = ft.Colors.GREY
 
-        # Update fees
-        self.broker_fee_sell_isk_text.value = f"Broker Fee (sell): {profit_data['broker_fee_sell']:,.2f} ISK"
-        self.broker_fee_buy_isk_text.value = f"Broker Fee (buy): {profit_data['broker_fee_buy']:,.2f} ISK"
-        self.sales_tax_isk_text.value = f"Sales Tax: {profit_data['sales_tax']:,.2f} ISK"
+        # Update fees (with percentages integrated, no decimals)
+        self.broker_fee_sell_isk_text.value = f"Broker Fee (sell) ({self.broker_fee_sell}%): {int(profit_data['broker_fee_sell']):,} ISK"
+        self.broker_fee_buy_isk_text.value = f"Broker Fee (buy) ({self.broker_fee_buy}%): {int(profit_data['broker_fee_buy']):,} ISK"
+        self.sales_tax_isk_text.value = f"Sales Tax ({self.sales_tax}%): {int(profit_data['sales_tax']):,} ISK"
 
-        # Update competitors count for both sell and buy
+        # Update competitors count for both sell and buy (green if < 10, red if >= 10)
         sell_competitors = count_competitors(self.current_sell_orders, is_sell_order=True)
         buy_competitors = count_competitors(self.current_buy_orders, is_sell_order=False)
+
         self.competitors_sell_text.value = f"Competitors (Sell): {sell_competitors}"
+        self.competitors_sell_text.color = ft.Colors.GREEN if sell_competitors < 10 else ft.Colors.RED
+
         self.competitors_buy_text.value = f"Competitors (Buy): {buy_competitors}"
+        self.competitors_buy_text.color = ft.Colors.GREEN if buy_competitors < 10 else ft.Colors.RED
 
         self.page.update()
 

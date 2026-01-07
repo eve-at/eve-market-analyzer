@@ -215,10 +215,14 @@ class AccountingToolScreen:
 
     def on_price_type_changed(self, e):
         """Handle price type radio change"""
+        # Capture current value to avoid race condition
+        current_price_type = self.price_to_copy_radio.value
+
         self.update_calculations()
-        # Copy new price to clipboard
+
+        # Copy new price to clipboard with explicit type
         async def copy_async():
-            await self.copy_price_to_clipboard()
+            await self.copy_price_to_clipboard(price_type=current_price_type)
         self.page.run_task(copy_async)
 
     def on_export_file_created(self, file_path, region_name, item_name):
@@ -249,6 +253,9 @@ class AccountingToolScreen:
 
     async def update_ui_with_data(self):
         """Update UI elements with current data"""
+        # Capture current price type to avoid race condition
+        current_price_type = self.price_to_copy_radio.value
+
         # Update item info
         self.item_name_text.value = self.current_item_name or "Unknown Item"
         self.type_id_text.value = f"Type ID: {self.current_type_id}" if self.current_type_id else "Type ID: -"
@@ -269,8 +276,8 @@ class AccountingToolScreen:
         # Update calculations
         self.update_calculations()
 
-        # Copy to clipboard
-        await self.copy_price_to_clipboard()
+        # Copy to clipboard with explicit type
+        await self.copy_price_to_clipboard(price_type=current_price_type)
 
     def update_calculations(self):
         """Update all calculated fields"""
@@ -318,13 +325,21 @@ class AccountingToolScreen:
 
         self.page.update()
 
-    async def copy_price_to_clipboard(self):
-        """Copy selected price to clipboard"""
+    async def copy_price_to_clipboard(self, price_type=None):
+        """Copy selected price to clipboard
+
+        Args:
+            price_type: "sell" or "buy". If None, uses current radio value
+        """
         if self.current_min_sell is None or self.current_max_buy is None:
             return
 
+        # Use provided price_type or fall back to radio value
+        if price_type is None:
+            price_type = self.price_to_copy_radio.value
+
         price_to_copy = None
-        if self.price_to_copy_radio.value == "sell":
+        if price_type == "sell":
             price_to_copy = get_next_sell_tick(self.current_min_sell)
         else:
             price_to_copy = get_next_buy_tick(self.current_max_buy)
@@ -333,7 +348,7 @@ class AccountingToolScreen:
             # Format price without thousand separators for game input
             price_str = f"{price_to_copy:.2f}"
             await ft.Clipboard().set(price_str)
-            print(f"Copied to clipboard: {price_str}")
+            print(f"Copied to clipboard ({price_type}): {price_str}")
 
     def start_file_monitoring(self):
         """Start monitoring market logs directory"""

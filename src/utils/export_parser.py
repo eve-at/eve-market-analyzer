@@ -6,6 +6,9 @@ from pathlib import Path
 OUR_STATION_ID = '60003760'
 OUR_SOLAR_SYSTEM_ID = '30000142'
 
+# Special items that ignore location restrictions
+PLEX_TYPE_ID = 44992
+
 
 def is_buy_order_competitive(order_data, our_station_id=OUR_STATION_ID, our_solar_system_id=OUR_SOLAR_SYSTEM_ID):
     """
@@ -60,8 +63,8 @@ def parse_export_file(file_path):
 
     Returns dict with:
     - type_id: int
-    - min_sell_price: float (minimum price for sell orders at station 60003760)
-    - max_buy_price: float (maximum competitive price for buy orders)
+    - min_sell_price: float (minimum price for sell orders at station 60003760, or globally for PLEX)
+    - max_buy_price: float (maximum competitive price for buy orders, or globally for PLEX)
     - sell_orders: list of sell order dicts
     - buy_orders: list of buy order dicts
     """
@@ -83,19 +86,24 @@ def parse_export_file(file_path):
             reader = csv.DictReader(f)
 
             for row in reader:
-                # Skip empty rows
-                if not row.get('price'):
-                    continue
-
-                # Extract type_id (same for all orders)
+                # Extract type_id first (same for all orders)
                 if result['type_id'] is None:
                     try:
                         result['type_id'] = int(row['typeID'])
                     except (ValueError, KeyError):
                         pass
 
+                # Skip empty rows
+                if not row.get('price'):
+                    continue
+
                 try:
                     price = float(row['price'])
+                except (ValueError, TypeError):
+                    # Skip rows with invalid price
+                    continue
+
+                try:
                     is_buy_order = row.get('bid', 'False') == 'True'
                     station_id = row.get('stationID', '')
 
@@ -110,22 +118,40 @@ def parse_export_file(file_path):
                         'range': row.get('range', '-1')
                     }
 
+                    # Check if this is PLEX (special handling) - now type_id is guaranteed to be set
+                    is_plex = result['type_id'] == PLEX_TYPE_ID
+
                     if is_buy_order:
                         result['buy_orders'].append(order_data)
 
-                        # Only consider competitive buy orders for max price
-                        if is_buy_order_competitive(order_data):
+                        # For PLEX, use max buy price globally; for others, check competitiveness
+                        if is_plex:
+                            print(f"DEBUG: PLEX buy order candidate: price={price}, current_max={result['max_buy_price']}")
                             if result['max_buy_price'] is None or price > result['max_buy_price']:
                                 result['max_buy_price'] = price
-                                print(f"DEBUG: Competitive buy order found: price={price}, station={station_id}, solar_system={order_data['solarSystemID']}, jumps={order_data['jumps']}, range={order_data['range']}")
+                                print(f"DEBUG: PLEX buy order ACCEPTED (new max): price={price}")
                         else:
-                            print(f"DEBUG: Non-competitive buy order ignored: price={price}, station={station_id}, solar_system={order_data['solarSystemID']}, jumps={order_data['jumps']}, range={order_data['range']}")
+                            # Only consider competitive buy orders for max price
+                            if is_buy_order_competitive(order_data):
+                                if result['max_buy_price'] is None or price > result['max_buy_price']:
+                                    result['max_buy_price'] = price
+                                    print(f"DEBUG: Competitive buy order found: price={price}, station={station_id}, solar_system={order_data['solarSystemID']}, jumps={order_data['jumps']}, range={order_data['range']}")
+                            else:
+                                print(f"DEBUG: Non-competitive buy order ignored: price={price}, station={station_id}, solar_system={order_data['solarSystemID']}, jumps={order_data['jumps']}, range={order_data['range']}")
                     else:
                         result['sell_orders'].append(order_data)
-                        # Track min sell price (only station 60003760)
-                        if station_id == OUR_STATION_ID:
+
+                        # For PLEX, use min sell price globally; for others, only at our station
+                        if is_plex:
+                            print(f"DEBUG: PLEX sell order candidate: price={price}, current_min={result['min_sell_price']}")
                             if result['min_sell_price'] is None or price < result['min_sell_price']:
                                 result['min_sell_price'] = price
+                                print(f"DEBUG: PLEX sell order ACCEPTED (new min): price={price}")
+                        else:
+                            # Track min sell price (only station 60003760)
+                            if station_id == OUR_STATION_ID:
+                                if result['min_sell_price'] is None or price < result['min_sell_price']:
+                                    result['min_sell_price'] = price
 
                 except (ValueError, KeyError) as e:
                     # Skip rows with invalid data
@@ -135,5 +161,13 @@ def parse_export_file(file_path):
     except Exception as e:
         print(f"Error parsing export file: {e}")
         raise
+
+    # Debug: print final results
+    print(f"DEBUG: Final parsing results:")
+    print(f"  type_id: {result['type_id']}")
+    print(f"  min_sell_price: {result['min_sell_price']}")
+    print(f"  max_buy_price: {result['max_buy_price']}")
+    print(f"  sell_orders count: {len(result['sell_orders'])}")
+    print(f"  buy_orders count: {len(result['buy_orders'])}")
 
     return result

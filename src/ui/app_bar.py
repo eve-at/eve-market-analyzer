@@ -6,8 +6,9 @@ from src.database.models import get_current_character_id, get_character
 class AppBar:
     """Top application bar with character info"""
 
-    def __init__(self, page: ft.Page, on_settings_click, on_title_click=None, show_back_button=False, on_back_click=None):
+    def __init__(self, page: ft.Page, on_character_click, on_settings_click, on_title_click=None, show_back_button=False, on_back_click=None):
         self.page = page
+        self.on_character_click = on_character_click
         self.on_settings_click = on_settings_click
         self.on_title_click = on_title_click
         self.show_back_button = show_back_button
@@ -28,7 +29,7 @@ class AppBar:
 
     def build_app_bar(self):
         """Build the app bar UI"""
-        # Character info or login prompt
+        # Character info or login button
         if self.current_character:
             # Logged in: show avatar and name
             character_button = ft.Container(
@@ -49,32 +50,33 @@ class AppBar:
                 padding=ft.padding.symmetric(horizontal=12, vertical=3),
                 border_radius=20,
                 bgcolor=ft.Colors.WHITE,
-                on_click=lambda e: self.on_settings_click(),
+                on_click=lambda e: self.on_character_click(),
                 ink=True
             )
         else:
-            # Not logged in: show default avatar and "Settings"
+            # Not logged in: show "Log In" button
             character_button = ft.Container(
-                content=ft.Row([
-                    ft.Image(
-                        src='static/img/default_avatar.svg',
-                        width=16,
-                        height=16,
-                        fit=ft.BoxFit.COVER
-                    ),
-                    ft.Text(
-                        "Settings",
-                        size=12,
-                        weight=ft.FontWeight.W_500,
-                        color=ft.Colors.GREY_700
-                    )
-                ], spacing=8),
+                content=ft.Text(
+                    "Log In",
+                    size=12,
+                    weight=ft.FontWeight.W_500,
+                    color=ft.Colors.GREY_700
+                ),
                 padding=ft.padding.symmetric(horizontal=12, vertical=3),
                 border_radius=20,
                 bgcolor=ft.Colors.WHITE,
-                on_click=lambda e: self.on_settings_click(),
+                on_click=lambda e: self.on_character_click(),
                 ink=True
             )
+
+        # Settings gear button
+        settings_button = ft.IconButton(
+            icon=ft.Icons.SETTINGS,
+            icon_size=20,
+            icon_color=ft.Colors.WHITE,
+            tooltip="Settings",
+            on_click=lambda e: self.on_settings_click()
+        )
 
         # Title container (clickable if callback provided)
         title_widget = ft.Text(
@@ -118,8 +120,10 @@ class AppBar:
         row_controls.append(title_container)
         row_controls.append(ft.Container(expand=True))
 
-        # Character button
+        # Character button and Settings button
         row_controls.append(character_button)
+        row_controls.append(ft.Container(width=5))
+        row_controls.append(settings_button)
 
         # App bar container
         app_bar = ft.Container(

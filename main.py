@@ -6,6 +6,7 @@ from src.ui import (
     MainMenu,
     TradeOpportunitiesScreen,
     SettingsScreen,
+    CharacterScreen,
     AppBar,
     AccountingToolScreen
 )
@@ -31,6 +32,7 @@ class MainApp:
         self.market_app = None
         self.trade_opportunities_screen = None
         self.settings_screen = None
+        self.character_screen = None
         self.update_data_screen = None
         self.accounting_tool_screen = None
 
@@ -89,6 +91,7 @@ class MainApp:
         # Create app bar (main menu doesn't show back button)
         self.app_bar = AppBar(
             self.page,
+            on_character_click=self.show_character,
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=False
@@ -125,6 +128,7 @@ class MainApp:
         # Create app bar with back button
         self.app_bar = AppBar(
             self.page,
+            on_character_click=self.show_character,
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,
@@ -170,6 +174,7 @@ class MainApp:
         # Create app bar with back button
         self.app_bar = AppBar(
             self.page,
+            on_character_click=self.show_character,
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,
@@ -228,6 +233,7 @@ class MainApp:
         # Create app bar with back button
         self.app_bar = AppBar(
             self.page,
+            on_character_click=self.show_character,
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,
@@ -240,7 +246,6 @@ class MainApp:
         self.settings_screen = SettingsScreen(
             page=self.page,
             on_back_callback=self.show_main_menu,
-            on_logout_callback=self.on_logout,
             marketlogs_dir=marketlogs_dir
         )
 
@@ -248,6 +253,34 @@ class MainApp:
             ft.Column([
                 self.app_bar.get(),
                 ft.Container(content=self.settings_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
+        self.page.update()
+
+    def show_character(self):
+        """Show character screen"""
+        self.page.controls.clear()
+
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_character_click=self.show_character,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
+
+        self.character_screen = CharacterScreen(
+            page=self.page,
+            on_back_callback=self.show_main_menu,
+            on_logout_callback=self.on_logout
+        )
+
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.character_screen.build(), expand=True)
             ], spacing=0, expand=True)
         )
         self.page.update()

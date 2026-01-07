@@ -58,13 +58,15 @@ class AccountingToolScreen:
             label="Min. Sell Price",
             value="",
             read_only=True,
-            width=200
+            width=200,
+            on_click=self.on_min_sell_field_click
         )
         self.max_buy_field = ft.TextField(
             label="Max. Buy Price",
             value="",
             read_only=True,
-            width=200
+            width=200,
+            on_click=self.on_max_buy_field_click
         )
 
         # Radio group for price to copy
@@ -212,6 +214,26 @@ class AccountingToolScreen:
             padding=20,
             expand=True
         )
+
+    def on_min_sell_field_click(self, _):
+        """Handle click on Min. Sell Price field"""
+        if self.current_min_sell is not None:
+            next_sell = get_next_sell_tick(self.current_min_sell)
+            async def copy_async():
+                price_str = f"{next_sell:.2f}"
+                await ft.Clipboard().set(price_str)
+                print(f"Copied Min. Sell Price to clipboard: {price_str}")
+            self.page.run_task(copy_async)
+
+    def on_max_buy_field_click(self, _):
+        """Handle click on Max. Buy Price field"""
+        if self.current_max_buy is not None:
+            next_buy = get_next_buy_tick(self.current_max_buy)
+            async def copy_async():
+                price_str = f"{next_buy:.2f}"
+                await ft.Clipboard().set(price_str)
+                print(f"Copied Max. Buy Price to clipboard: {price_str}")
+            self.page.run_task(copy_async)
 
     def on_price_type_changed(self, e):
         """Handle price type radio change"""

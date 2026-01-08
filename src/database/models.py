@@ -258,12 +258,12 @@ def create_character_history_table(character_id):
                     type_id INT NOT NULL,
                     volume_remain INT NOT NULL,
                     volume_total INT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    
+
                     volume_effective INT NOT NULL,
                     exhausted BOOLEAN NOT NULL DEFAULT FALSE,
-                    
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_type_id (type_id),
                     INDEX idx_issued (issued),
                     INDEX idx_state (state)
@@ -279,6 +279,113 @@ def create_character_history_table(character_id):
         return False
     except Exception as e:
         print(f"Error while creating character history table: {e}")
+        return False
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def create_character_inventory_table(character_id):
+    """Create character inventory table if it doesn't exist
+
+    Args:
+        character_id: Character ID to create inventory table for
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor()
+
+            table_name = f"character_inventory_{character_id}"
+
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{table_name}` (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    type_id INT NOT NULL,
+                    quantity INT NOT NULL,
+                    purchase_price DECIMAL(20,2) NOT NULL,
+                    purchase_order_id BIGINT NOT NULL,
+                    purchase_date DATETIME NOT NULL,
+                    broker_fee_buy DECIMAL(20,2) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_type_id (type_id),
+                    INDEX idx_purchase_date (purchase_date)
+                )
+            """)
+            print(f"Table '{table_name}' created or already exists")
+
+            connection.commit()
+            return True
+
+    except Error as e:
+        print(f"Database error while creating character inventory table: {e}")
+        return False
+    except Exception as e:
+        print(f"Error while creating character inventory table: {e}")
+        return False
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def create_character_profit_table(character_id):
+    """Create character profit table if it doesn't exist
+
+    Args:
+        character_id: Character ID to create profit table for
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor()
+
+            table_name = f"character_profit_{character_id}"
+
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{table_name}` (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    type_id INT NOT NULL,
+                    sell_order_id BIGINT NOT NULL,
+                    sell_date DATETIME NOT NULL,
+                    quantity INT NOT NULL,
+                    purchase_price DECIMAL(20,2) NOT NULL,
+                    sell_price DECIMAL(20,2) NOT NULL,
+                    broker_fee_buy DECIMAL(20,2) NOT NULL,
+                    broker_fee_sell DECIMAL(20,2) NOT NULL,
+                    sales_tax DECIMAL(20,2) NOT NULL,
+                    gross_profit DECIMAL(20,2) NOT NULL,
+                    net_profit DECIMAL(20,2) NOT NULL,
+                    purchase_order_id BIGINT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_type_id (type_id),
+                    INDEX idx_sell_date (sell_date),
+                    INDEX idx_sell_order_id (sell_order_id)
+                )
+            """)
+            print(f"Table '{table_name}' created or already exists")
+
+            connection.commit()
+            return True
+
+    except Error as e:
+        print(f"Database error while creating character profit table: {e}")
+        return False
+    except Exception as e:
+        print(f"Error while creating character profit table: {e}")
         return False
     finally:
         if connection and connection.is_connected():
@@ -316,8 +423,8 @@ def save_character_order_history(character_id, orders):
                         INSERT IGNORE INTO `{table_name}`
                         (order_id, duration, escrow, is_buy_order, is_corporation, issued,
                          location_id, min_volume, price, range_type, region_id, state,
-                         type_id, volume_remain, volume_total)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         type_id, volume_remain, volume_total, volume_effective)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         order['order_id'],
                         order['duration'],
@@ -333,7 +440,8 @@ def save_character_order_history(character_id, orders):
                         order['state'],
                         order['type_id'],
                         order['volume_remain'],
-                        order['volume_total']
+                        order['volume_total'],
+                        int(order['volume_total']) - int(order['volume_remain'])
                     ))
 
                     # Check if row was inserted
@@ -355,6 +463,361 @@ def save_character_order_history(character_id, orders):
     except Exception as e:
         print(f"Error while saving order history: {e}")
         return (0, 0)
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def process_character_orders(character_id, broker_fee_buy_rate, broker_fee_sell_rate, sales_tax_rate):
+    """Process character orders to calculate profits using FIFO method
+
+    Args:
+        character_id: Character ID
+        broker_fee_buy_rate: Broker fee rate for buy orders (e.g., 3.00 for 3%)
+        broker_fee_sell_rate: Broker fee rate for sell orders (e.g., 3.00 for 3%)
+        sales_tax_rate: Sales tax rate (e.g., 7.50 for 7.5%)
+
+    Returns:
+        dict: Statistics about processed orders
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor(dictionary=True)
+
+            history_table = f"character_history_{character_id}"
+            inventory_table = f"character_inventory_{character_id}"
+            profit_table = f"character_profit_{character_id}"
+
+            stats = {
+                'buy_orders_processed': 0,
+                'sell_orders_processed': 0,
+                'items_added_to_inventory': 0,
+                'items_sold': 0,
+                'items_sold_without_purchase': 0
+            }
+
+            # Get all unprocessed orders sorted by issued date (FIFO)
+            cursor.execute(f"""
+                SELECT * FROM `{history_table}`
+                WHERE exhausted = 0
+                ORDER BY issued ASC
+            """)
+
+            orders = cursor.fetchall()
+
+            for order in orders:
+                if order['is_buy_order']:
+                    # Process BUY order - add to inventory
+                    if order['volume_effective'] > 0:
+                        broker_fee = float(order['price']) * order['volume_effective'] * (broker_fee_buy_rate / 100.0)
+
+                        cursor.execute(f"""
+                            INSERT INTO `{inventory_table}`
+                            (type_id, quantity, purchase_price, purchase_order_id, purchase_date, broker_fee_buy)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """, (
+                            order['type_id'],
+                            order['volume_effective'],
+                            order['price'],
+                            order['order_id'],
+                            order['issued'],
+                            broker_fee
+                        ))
+
+                        stats['items_added_to_inventory'] += order['volume_effective']
+                        stats['buy_orders_processed'] += 1
+
+                else:
+                    # Process SELL order - calculate profit using FIFO
+                    remaining_to_sell = order['volume_effective']
+
+                    if remaining_to_sell > 0:
+                        # Get inventory items for this type_id, sorted by purchase date (FIFO)
+                        cursor.execute(f"""
+                            SELECT * FROM `{inventory_table}`
+                            WHERE type_id = %s
+                            ORDER BY purchase_date ASC, id ASC
+                        """, (order['type_id'],))
+
+                        inventory_items = cursor.fetchall()
+
+                        for inv_item in inventory_items:
+                            if remaining_to_sell <= 0:
+                                break
+
+                            # How much can we sell from this inventory item
+                            qty_to_sell = min(remaining_to_sell, inv_item['quantity'])
+
+                            # Calculate costs
+                            cost_base = float(inv_item['purchase_price']) * qty_to_sell
+                            cost_broker_buy = float(inv_item['broker_fee_buy']) * (qty_to_sell / inv_item['quantity'])
+                            cost_total = cost_base + cost_broker_buy
+
+                            # Calculate revenue
+                            revenue_base = float(order['price']) * qty_to_sell
+                            cost_broker_sell = revenue_base * (broker_fee_sell_rate / 100.0)
+                            cost_sales_tax = revenue_base * (sales_tax_rate / 100.0)
+                            revenue_net = revenue_base - cost_broker_sell - cost_sales_tax
+
+                            # Calculate profit
+                            gross_profit = revenue_base - cost_base
+                            net_profit = revenue_net - cost_total
+
+                            # Save profit record
+                            cursor.execute(f"""
+                                INSERT INTO `{profit_table}`
+                                (type_id, sell_order_id, sell_date, quantity, purchase_price, sell_price,
+                                 broker_fee_buy, broker_fee_sell, sales_tax, gross_profit, net_profit, purchase_order_id)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                order['type_id'],
+                                order['order_id'],
+                                order['issued'],
+                                qty_to_sell,
+                                inv_item['purchase_price'],
+                                order['price'],
+                                cost_broker_buy,
+                                cost_broker_sell,
+                                cost_sales_tax,
+                                gross_profit,
+                                net_profit,
+                                inv_item['purchase_order_id']
+                            ))
+
+                            # Update inventory
+                            new_quantity = inv_item['quantity'] - qty_to_sell
+                            if new_quantity > 0:
+                                cursor.execute(f"""
+                                    UPDATE `{inventory_table}`
+                                    SET quantity = %s
+                                    WHERE id = %s
+                                """, (new_quantity, inv_item['id']))
+                            else:
+                                cursor.execute(f"""
+                                    DELETE FROM `{inventory_table}`
+                                    WHERE id = %s
+                                """, (inv_item['id'],))
+
+                            remaining_to_sell -= qty_to_sell
+                            stats['items_sold'] += qty_to_sell
+
+                        # If we still have items to sell but no inventory (sold without purchase)
+                        if remaining_to_sell > 0:
+                            # Record with zero profit
+                            revenue_base = float(order['price']) * remaining_to_sell
+                            cost_broker_sell = revenue_base * (broker_fee_sell_rate / 100.0)
+                            cost_sales_tax = revenue_base * (sales_tax_rate / 100.0)
+
+                            cursor.execute(f"""
+                                INSERT INTO `{profit_table}`
+                                (type_id, sell_order_id, sell_date, quantity, purchase_price, sell_price,
+                                 broker_fee_buy, broker_fee_sell, sales_tax, gross_profit, net_profit, purchase_order_id)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                order['type_id'],
+                                order['order_id'],
+                                order['issued'],
+                                remaining_to_sell,
+                                0,  # No purchase price
+                                order['price'],
+                                0,  # No buy broker fee
+                                cost_broker_sell,
+                                cost_sales_tax,
+                                0,  # Zero gross profit
+                                0,  # Zero net profit
+                                None  # No purchase order
+                            ))
+
+                            stats['items_sold_without_purchase'] += remaining_to_sell
+
+                        stats['sell_orders_processed'] += 1
+
+                # Mark order as processed
+                cursor.execute(f"""
+                    UPDATE `{history_table}`
+                    SET exhausted = 1
+                    WHERE order_id = %s
+                """, (order['order_id'],))
+
+            connection.commit()
+            return stats
+
+    except Error as e:
+        print(f"Database error while processing orders: {e}")
+        if connection:
+            connection.rollback()
+        return None
+    except Exception as e:
+        print(f"Error while processing orders: {e}")
+        if connection:
+            connection.rollback()
+        return None
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def get_profit_by_months(character_id):
+    """Get profit report aggregated by months
+
+    Args:
+        character_id: Character ID
+
+    Returns:
+        list: List of dicts with monthly profit data
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor(dictionary=True)
+
+            history_table = f"character_history_{character_id}"
+            profit_table = f"character_profit_{character_id}"
+
+            # Get monthly aggregated data
+            cursor.execute(f"""
+                SELECT
+                    DATE_FORMAT(p.sell_date, '%Y-%m') as month,
+                    COUNT(DISTINCT CASE WHEN h.is_buy_order = 1 THEN h.order_id END) as buy_orders,
+                    COUNT(DISTINCT p.sell_order_id) as sell_orders,
+                    SUM(p.sell_price * p.quantity) as total_sales,
+                    SUM(p.broker_fee_sell + p.sales_tax) as total_taxes,
+                    SUM(p.net_profit) as total_profit
+                FROM `{profit_table}` p
+                LEFT JOIN `{history_table}` h ON h.type_id = p.type_id
+                    AND h.is_buy_order = 1
+                    AND DATE_FORMAT(h.issued, '%Y-%m') = DATE_FORMAT(p.sell_date, '%Y-%m')
+                GROUP BY month
+                ORDER BY month DESC
+            """)
+
+            return cursor.fetchall()
+
+    except Error as e:
+        print(f"Database error while getting profit by months: {e}")
+        return []
+    except Exception as e:
+        print(f"Error while getting profit by months: {e}")
+        return []
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def get_profit_by_days(character_id, date_from, date_to):
+    """Get profit report aggregated by days for a date range
+
+    Args:
+        character_id: Character ID
+        date_from: Start date (YYYY-MM-DD)
+        date_to: End date (YYYY-MM-DD)
+
+    Returns:
+        list: List of dicts with daily profit data
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor(dictionary=True)
+
+            history_table = f"character_history_{character_id}"
+            profit_table = f"character_profit_{character_id}"
+
+            cursor.execute(f"""
+                SELECT
+                    DATE(p.sell_date) as day,
+                    COUNT(DISTINCT CASE WHEN h.is_buy_order = 1 THEN h.order_id END) as buy_orders,
+                    COUNT(DISTINCT p.sell_order_id) as sell_orders,
+                    SUM(p.sell_price * p.quantity) as total_sales,
+                    SUM(p.broker_fee_sell + p.sales_tax) as total_taxes,
+                    SUM(p.net_profit) as total_profit
+                FROM `{profit_table}` p
+                LEFT JOIN `{history_table}` h ON h.type_id = p.type_id
+                    AND h.is_buy_order = 1
+                    AND DATE(h.issued) = DATE(p.sell_date)
+                WHERE DATE(p.sell_date) BETWEEN %s AND %s
+                GROUP BY day
+                ORDER BY day DESC
+            """, (date_from, date_to))
+
+            return cursor.fetchall()
+
+    except Error as e:
+        print(f"Database error while getting profit by days: {e}")
+        return []
+    except Exception as e:
+        print(f"Error while getting profit by days: {e}")
+        return []
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def get_profit_by_items(character_id, date_from, date_to):
+    """Get profit report aggregated by items for a date range
+
+    Args:
+        character_id: Character ID
+        date_from: Start date (YYYY-MM-DD)
+        date_to: End date (YYYY-MM-DD)
+
+    Returns:
+        list: List of dicts with item profit data including item names
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor(dictionary=True)
+
+            history_table = f"character_history_{character_id}"
+            profit_table = f"character_profit_{character_id}"
+
+            cursor.execute(f"""
+                SELECT
+                    p.type_id,
+                    t.typeName as item_name,
+                    (SELECT COUNT(DISTINCT h2.order_id)
+                     FROM `{history_table}` h2
+                     WHERE h2.type_id = p.type_id
+                       AND h2.is_buy_order = 1
+                       AND DATE(h2.issued) BETWEEN %s AND %s) as buy_orders,
+                    COUNT(DISTINCT p.sell_order_id) as sell_orders,
+                    SUM(p.quantity) as quantity_sold,
+                    SUM(p.sell_price * p.quantity) as total_sales,
+                    SUM(p.broker_fee_sell + p.sales_tax) as total_taxes,
+                    SUM(p.net_profit) as total_profit
+                FROM `{profit_table}` p
+                LEFT JOIN types t ON t.typeID = p.type_id
+                WHERE DATE(p.sell_date) BETWEEN %s AND %s
+                GROUP BY p.type_id, t.typeName
+                ORDER BY total_profit DESC
+            """, (date_from, date_to, date_from, date_to))
+
+            return cursor.fetchall()
+
+    except Error as e:
+        print(f"Database error while getting profit by items: {e}")
+        return []
+    except Exception as e:
+        print(f"Error while getting profit by items: {e}")
+        return []
     finally:
         if connection and connection.is_connected():
             cursor.close()

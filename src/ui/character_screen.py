@@ -1,12 +1,15 @@
 """Character screen UI component"""
 import flet as ft
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Thread
 from src.auth.eve_sso import EVESSO
 from src.auth.esi_api import ESIAPI
 from src.database.models import (
     get_character, save_character, get_current_character_id,
-    save_setting, create_character_history_table, save_character_order_history
+    save_setting, create_character_history_table, save_character_order_history,
+    create_character_inventory_table, create_character_profit_table,
+    process_character_orders, get_profit_by_months, get_profit_by_days,
+    get_profit_by_items
 )
 
 
@@ -24,8 +27,10 @@ class CharacterScreen:
         character_id = get_current_character_id()
         if character_id:
             self.current_character = get_character(character_id)
-            # Create history table for this character if it doesn't exist
+            # Create tables for this character if they don't exist
             create_character_history_table(character_id)
+            create_character_inventory_table(character_id)
+            create_character_profit_table(character_id)
 
         # Load settings from database or use defaults
         broker_fee_sell = "3.00"
@@ -152,6 +157,73 @@ class CharacterScreen:
             visible=False
         )
 
+        # Profit Reports UI Elements
+        self.report_type_radio = ft.RadioGroup(
+            content=ft.Column([
+                ft.Radio(value="months", label="Profit by Months"),
+                ft.Radio(value="days", label="Profit by Days"),
+                ft.Radio(value="items", label="Profit by Items")
+            ]),
+            value="months",
+            on_change=self.on_report_type_change
+        )
+
+        # Date range pickers (hidden by default for months view)
+        date_to = datetime.now()
+        date_from = date_to - timedelta(days=30)
+
+        self.date_from_picker = ft.TextField(
+            label="From Date",
+            value=date_from.strftime("%Y-%m-%d"),
+            width=150,
+            visible=False,
+            read_only=True,
+            on_click=lambda e: self._show_date_picker(e, "from")
+        )
+
+        self.date_to_picker = ft.TextField(
+            label="To Date",
+            value=date_to.strftime("%Y-%m-%d"),
+            width=150,
+            visible=False,
+            read_only=True,
+            on_click=lambda e: self._show_date_picker(e, "to")
+        )
+
+        self.generate_report_button = ft.ElevatedButton(
+            "Generate Report",
+            on_click=self.on_generate_report,
+            visible=False,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE,
+                color=ft.Colors.WHITE
+            )
+        )
+
+        # Progress indicator for reports
+        self.report_progress = ft.ProgressRing(visible=False, width=30, height=30)
+
+        # Report table - initialize with placeholder column
+        self.report_table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("No Data", weight=ft.FontWeight.BOLD))
+            ],
+            rows=[],
+            border=ft.border.all(1, ft.Colors.GREY_400),
+            border_radius=5,
+            horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
+            heading_row_color=ft.Colors.GREY_200,
+        )
+
+        self.report_container = ft.Container(
+            content=ft.Column([
+                ft.Text("Select a report type and generate to view data", size=14, color=ft.Colors.GREY_600),
+                ft.Container(height=10),
+                self.report_table
+            ], scroll=ft.ScrollMode.AUTO),
+            expand=True
+        )
+
         # EVE Online Account column
         eve_account_column = ft.Column([
             ft.Text(
@@ -183,6 +255,77 @@ class CharacterScreen:
             ], alignment=ft.MainAxisAlignment.START)
         ], spacing=5)
 
+        # Create tab contents
+        self.orders_import_content = ft.Container(
+            content=ft.Column([
+                ft.Container(height=10),
+                ft.Row([
+                    self.update_orders_button
+                ], alignment=ft.MainAxisAlignment.START),
+                ft.Container(height=10),
+                self.log_container
+            ], spacing=5, scroll=ft.ScrollMode.AUTO),
+            padding=10,
+            expand=True,
+            visible=True
+        )
+
+        self.profit_reports_content = ft.Container(
+            content=ft.Column([
+                ft.Container(height=10),
+                self.report_type_radio,
+                ft.Container(height=10),
+                ft.Row([
+                    self.date_from_picker,
+                    ft.Container(width=10),
+                    self.date_to_picker,
+                    ft.Container(width=10),
+                    self.generate_report_button,
+                    ft.Container(width=10),
+                    self.report_progress
+                ], alignment=ft.MainAxisAlignment.START),
+                ft.Container(height=10),
+                self.report_container
+            ], spacing=5, expand=True, scroll=ft.ScrollMode.AUTO),
+            padding=10,
+            expand=True,
+            visible=False
+        )
+
+        # Create custom tab buttons (instead of Tabs component)
+        self.active_tab = "orders"  # Track active tab
+
+        self.orders_tab_button = ft.Container(
+            content=ft.Text("Orders Import", size=14, weight=ft.FontWeight.BOLD),
+            padding=ft.Padding(15, 10, 15, 10),
+            bgcolor=ft.Colors.BLUE,
+            border_radius=ft.border_radius.only(top_left=5, top_right=5),
+            on_click=lambda _: self.switch_tab("orders"),
+            ink=True
+        )
+
+        self.reports_tab_button = ft.Container(
+            content=ft.Text("Profit Reports", size=14),
+            padding=ft.Padding(15, 10, 15, 10),
+            bgcolor=ft.Colors.GREY_300,
+            border_radius=ft.border_radius.only(top_left=5, top_right=5),
+            on_click=lambda _: self.switch_tab("reports"),
+            ink=True
+        )
+
+        self.tab_buttons_row = ft.Row([
+            self.orders_tab_button,
+            self.reports_tab_button
+        ], spacing=2)
+
+        # Tabs container to hold both tab bar and content
+        self.tabs_container = ft.Column([
+            self.tab_buttons_row,
+            ft.Container(height=2, bgcolor=ft.Colors.BLUE),  # Separator line
+            self.orders_import_content,
+            self.profit_reports_content
+        ], spacing=0, expand=True, visible=bool(self.current_character))
+
         # Main container
         self.container = ft.Container(
             content=ft.Column([
@@ -195,13 +338,9 @@ class CharacterScreen:
                 ft.Container(height=10),
                 self.status_text,
                 ft.Container(height=20),
-                # Update Historical Orders section
-                ft.Row([
-                    self.update_orders_button
-                ], alignment=ft.MainAxisAlignment.START),
-                ft.Container(height=10),
-                self.log_container
-            ], spacing=5, scroll=ft.ScrollMode.AUTO),
+                # Tabs for Orders and Reports
+                self.tabs_container
+            ], spacing=5, scroll=ft.ScrollMode.AUTO, expand=True),
             padding=20,
             expand=True
         )
@@ -224,8 +363,10 @@ class CharacterScreen:
             # Save as current character
             save_setting('current_character_id', str(character_data['character_id']))
 
-            # Create history table for this character if it doesn't exist
+            # Create tables for this character if they don't exist
             create_character_history_table(character_data['character_id'])
+            create_character_inventory_table(character_data['character_id'])
+            create_character_profit_table(character_data['character_id'])
 
             # Update UI
             self.current_character = character_data
@@ -244,6 +385,7 @@ class CharacterScreen:
             self.eve_login_button.visible = False
             self.logout_button.visible = True
             self.update_orders_button.visible = True
+            self.tabs_container.visible = True
 
             self.status_text.value = f"Successfully logged in as {character_data.get('character_name')}"
             self.status_text.color = ft.Colors.GREEN
@@ -264,6 +406,7 @@ class CharacterScreen:
         self.eve_login_button.visible = True
         self.logout_button.visible = False
         self.update_orders_button.visible = False
+        self.tabs_container.visible = False
         self.log_container.visible = False
 
         # Reset avatar to default
@@ -439,6 +582,34 @@ class CharacterScreen:
             log_callback(f"New orders inserted: {total_inserted}")
             log_callback(f"Duplicates skipped: {total_skipped}")
 
+            # Process orders to calculate profits
+            if total_inserted > 0:
+                log_callback("")
+                log_callback("Processing orders to calculate profits...")
+
+                broker_fee_buy = float(self.current_character.get('broker_fee_buy', 3.00))
+                broker_fee_sell = float(self.current_character.get('broker_fee_sell', 3.00))
+                sales_tax = float(self.current_character.get('sales_tax', 7.50))
+
+                stats = process_character_orders(
+                    character_id,
+                    broker_fee_buy,
+                    broker_fee_sell,
+                    sales_tax
+                )
+
+                if stats:
+                    log_callback("=" * 50)
+                    log_callback("Profit calculation completed!")
+                    log_callback(f"Buy orders processed: {stats['buy_orders_processed']}")
+                    log_callback(f"Items added to inventory: {stats['items_added_to_inventory']}")
+                    log_callback(f"Sell orders processed: {stats['sell_orders_processed']}")
+                    log_callback(f"Items sold: {stats['items_sold']}")
+                    if stats['items_sold_without_purchase'] > 0:
+                        log_callback(f"Items sold without purchase record: {stats['items_sold_without_purchase']} (profit = 0)")
+                else:
+                    log_callback("ERROR: Failed to process orders")
+
         except Exception as e:
             log_callback(f"ERROR: {str(e)}")
             import traceback
@@ -450,6 +621,239 @@ class CharacterScreen:
                 self.update_orders_button.disabled = False
                 self.page.update()
             self.page.run_task(update_ui)
+
+    def switch_tab(self, tab_name):
+        """Switch between tabs"""
+        self.active_tab = tab_name
+
+        if tab_name == "orders":
+            # Orders Import tab
+            self.orders_import_content.visible = True
+            self.profit_reports_content.visible = False
+            # Update button styles
+            self.orders_tab_button.bgcolor = ft.Colors.BLUE
+            self.orders_tab_button.content.weight = ft.FontWeight.BOLD
+            self.reports_tab_button.bgcolor = ft.Colors.GREY_300
+            self.reports_tab_button.content.weight = ft.FontWeight.NORMAL
+        elif tab_name == "reports":
+            # Profit Reports tab
+            self.orders_import_content.visible = False
+            self.profit_reports_content.visible = True
+            # Update button styles
+            self.orders_tab_button.bgcolor = ft.Colors.GREY_300
+            self.orders_tab_button.content.weight = ft.FontWeight.NORMAL
+            self.reports_tab_button.bgcolor = ft.Colors.BLUE
+            self.reports_tab_button.content.weight = ft.FontWeight.BOLD
+            # Auto-generate months report if on reports tab
+            if self.report_type_radio.value == "months":
+                self._load_profit_report()
+
+        self.page.update()
+
+    def on_report_type_change(self, e):
+        """Handle report type radio button change"""
+        report_type = self.report_type_radio.value
+
+        # Show/hide date pickers and generate button based on report type
+        if report_type == "months":
+            self.date_from_picker.visible = False
+            self.date_to_picker.visible = False
+            self.generate_report_button.visible = False
+            # Auto-generate report for months
+            self._load_profit_report()
+        else:
+            self.date_from_picker.visible = True
+            self.date_to_picker.visible = True
+            self.generate_report_button.visible = True
+
+        self.page.update()
+
+    def _show_date_picker(self, e, picker_type):
+        """Show date picker dialog"""
+        def on_date_change(_):
+            # Update value when date changes
+            pass
+
+        def on_date_dismiss(_):
+            # Update the text field when picker is dismissed
+            selected_date = date_picker.value
+            if selected_date:
+                if picker_type == "from":
+                    self.date_from_picker.value = selected_date.strftime("%Y-%m-%d")
+                else:
+                    self.date_to_picker.value = selected_date.strftime("%Y-%m-%d")
+                self.page.update()
+
+        current_value = self.date_from_picker.value if picker_type == "from" else self.date_to_picker.value
+        initial_date = datetime.strptime(current_value, "%Y-%m-%d") if current_value else datetime.now()
+
+        date_picker = ft.DatePicker(
+            on_change=on_date_change,
+            on_dismiss=on_date_dismiss,
+            first_date=datetime(2020, 1, 1),
+            last_date=datetime.now(),
+            value=initial_date
+        )
+
+        self.page.overlay.append(date_picker)
+        self.page.update()
+        date_picker.open = True
+        self.page.update()
+
+    def on_generate_report(self, e):
+        """Handle generate report button click"""
+        self._load_profit_report()
+
+    def _load_profit_report(self):
+        """Load profit report based on selected type"""
+        if not self.current_character:
+            return
+
+        # Show progress indicator
+        self.report_progress.visible = True
+        self.report_table.rows = []
+        self.page.update()
+
+        # Run report generation in background
+        thread = Thread(target=self._run_report_generation, daemon=True)
+        thread.start()
+
+    def _run_report_generation(self):
+        """Generate report in background thread"""
+        try:
+            character_id = self.current_character['character_id']
+            report_type = self.report_type_radio.value
+
+            if report_type == "months":
+                data = get_profit_by_months(character_id)
+                async def update_ui():
+                    self._display_months_report(data)
+                self.page.run_task(update_ui)
+
+            elif report_type == "days":
+                date_from = self.date_from_picker.value
+                date_to = self.date_to_picker.value
+                data = get_profit_by_days(character_id, date_from, date_to)
+                async def update_ui():
+                    self._display_days_report(data)
+                self.page.run_task(update_ui)
+
+            elif report_type == "items":
+                date_from = self.date_from_picker.value
+                date_to = self.date_to_picker.value
+                data = get_profit_by_items(character_id, date_from, date_to)
+                async def update_ui():
+                    self._display_items_report(data)
+                self.page.run_task(update_ui)
+
+        except Exception as e:
+            print(f"Error generating report: {e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            async def hide_progress():
+                self.report_progress.visible = False
+                self.page.update()
+            self.page.run_task(hide_progress)
+
+    def _display_months_report(self, data):
+        """Display profit by months report"""
+        self.report_table.columns = [
+            ft.DataColumn(ft.Text("Month", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Buy Orders", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Sell Orders", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Total Sales", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Taxes", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Net Profit", weight=ft.FontWeight.BOLD)),
+        ]
+
+        self.report_table.rows = []
+        for row in data:
+            self.report_table.rows.append(
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(row['month'] or 'N/A')),
+                        ft.DataCell(ft.Text(str(row['buy_orders'] or 0))),
+                        ft.DataCell(ft.Text(str(row['sell_orders'] or 0))),
+                        ft.DataCell(ft.Text(f"{float(row['total_sales'] or 0):,.2f}")),
+                        ft.DataCell(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}")),
+                        ft.DataCell(ft.Text(
+                            f"{float(row['total_profit'] or 0):,.2f}",
+                            color=ft.Colors.GREEN if float(row['total_profit'] or 0) > 0 else ft.Colors.RED
+                        )),
+                    ]
+                )
+            )
+
+        self.page.update()
+
+    def _display_days_report(self, data):
+        """Display profit by days report"""
+        self.report_table.columns = [
+            ft.DataColumn(ft.Text("Date", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Buy Orders", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Sell Orders", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Total Sales", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Taxes", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Net Profit", weight=ft.FontWeight.BOLD)),
+        ]
+
+        self.report_table.rows = []
+        for row in data:
+            day_str = row['day'].strftime("%Y-%m-%d") if hasattr(row['day'], 'strftime') else str(row['day'])
+            self.report_table.rows.append(
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(day_str)),
+                        ft.DataCell(ft.Text(str(row['buy_orders'] or 0))),
+                        ft.DataCell(ft.Text(str(row['sell_orders'] or 0))),
+                        ft.DataCell(ft.Text(f"{float(row['total_sales'] or 0):,.2f}")),
+                        ft.DataCell(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}")),
+                        ft.DataCell(ft.Text(
+                            f"{float(row['total_profit'] or 0):,.2f}",
+                            color=ft.Colors.GREEN if float(row['total_profit'] or 0) > 0 else ft.Colors.RED
+                        )),
+                    ]
+                )
+            )
+
+        self.page.update()
+
+    def _display_items_report(self, data):
+        """Display profit by items report"""
+        self.report_table.columns = [
+            ft.DataColumn(ft.Text("Item Name", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Type ID", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Buy Orders", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Sell Orders", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Quantity Sold", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Total Sales", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Taxes", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Net Profit", weight=ft.FontWeight.BOLD)),
+        ]
+
+        self.report_table.rows = []
+        for row in data:
+            self.report_table.rows.append(
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(row['item_name'] or 'Unknown', max_lines=1)),
+                        ft.DataCell(ft.Text(str(row['type_id']))),
+                        ft.DataCell(ft.Text(str(row['buy_orders'] or 0))),
+                        ft.DataCell(ft.Text(str(row['sell_orders'] or 0))),
+                        ft.DataCell(ft.Text(f"{int(row['quantity_sold'] or 0):,}")),
+                        ft.DataCell(ft.Text(f"{float(row['total_sales'] or 0):,.2f}")),
+                        ft.DataCell(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}")),
+                        ft.DataCell(ft.Text(
+                            f"{float(row['total_profit'] or 0):,.2f}",
+                            color=ft.Colors.GREEN if float(row['total_profit'] or 0) > 0 else ft.Colors.RED
+                        )),
+                    ]
+                )
+            )
+
+        self.page.update()
 
     def build(self):
         """Build and return the UI container"""

@@ -9,6 +9,10 @@ DB_CONFIG = {
 # Static data
 REGIONS_DF = 'https://www.fuzzwork.co.uk/dump/latest/mapRegions.csv'
 TYPES_DF = 'https://www.fuzzwork.co.uk/dump/latest/invTypes.csv'
+MARKET_GROUPS_DF = 'https://www.fuzzwork.co.uk/dump/latest/invMarketGroups.csv'
+STATIONS_DF = 'https://www.fuzzwork.co.uk/dump/latest/staStations.csv'
+SOLAR_SYSTEMS_DF = 'https://www.fuzzwork.co.uk/dump/latest/mapSolarSystems.csv'
+SOLAR_SYSTEM_JUMPS_DF = 'https://www.fuzzwork.co.uk/dump/latest/mapSolarSystemJumps.csv'
 
 # Path to EVE Online market logs directory
 # Example for Windows: r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
@@ -25,4 +29,6 @@ MIN_DAILY_QUANTITY = 200
 EVE_CLIENT_ID = 'app_client_id'
 EVE_CLIENT_SECRET = 'app_client_secret'
 EVE_CALLBACK_URL = 'http://localhost:8888/callback'
-EVE_SCOPES = "esi-markets.read_character_orders.v1"
+EVE_SCOPES = "esi-markets.read_character_orders.v1 esi-location.read_location.v1"
+EVE_CALLBACK_HOST = 'localhost'
+EVE_CALLBACK_PORT = '8888'

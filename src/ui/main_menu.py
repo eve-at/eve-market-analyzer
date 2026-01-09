@@ -34,6 +34,12 @@ class MainMenu:
                 "icon": ft.Icons.CALCULATE,
                 "description": "Track transactions and calculate profits",
                 "key": "accounting_tool"
+            },
+            {
+                "title": "Courier Path Finder",
+                "icon": ft.Icons.ROUTE,
+                "description": "Optimize delivery routes for multiple stations",
+                "key": "courier_path_finder"
             }
         ]
 
@@ -95,6 +101,10 @@ class MainMenu:
                 ft.Row([
                     menu_cards[2],
                     menu_cards[3]
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
+                ft.Container(height=20),
+                ft.Row([
+                    menu_cards[4]
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=20,

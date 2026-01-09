@@ -88,6 +88,9 @@ def import_static_data(callback=None):
         regions_file = download_csv(settings.REGIONS_DF, 'mapRegions.csv', callback)
         types_file = download_csv(settings.TYPES_DF, 'invTypes.csv', callback)
         market_groups_file = download_csv(settings.MARKET_GROUPS_DF, 'invMarketGroups.csv', callback)
+        stations_file = download_csv(settings.STATIONS_DF, 'staStations.csv', callback)
+        solar_systems_file = download_csv(settings.SOLAR_SYSTEMS_DF, 'mapSolarSystems.csv', callback)
+        solar_system_jumps_file = download_csv(settings.SOLAR_SYSTEM_JUMPS_DF, 'mapSolarSystemJumps.csv', callback)
     except Exception as e:
         log(f"\nFailed to download files: {e}")
         return False
@@ -111,9 +114,15 @@ def import_static_data(callback=None):
             regions_df = pd.read_csv(regions_file)
             types_df = pd.read_csv(types_file)
             market_groups_df = pd.read_csv(market_groups_file)
+            stations_df = pd.read_csv(stations_file)
+            solar_systems_df = pd.read_csv(solar_systems_file)
+            solar_system_jumps_df = pd.read_csv(solar_system_jumps_file)
             log(f"Loaded {len(regions_df)} regions")
             log(f"Loaded {len(types_df)} item types")
-            log(f"Loaded {len(market_groups_df)} item types")
+            log(f"Loaded {len(market_groups_df)} market groups")
+            log(f"Loaded {len(stations_df)} stations")
+            log(f"Loaded {len(solar_systems_df)} solar systems")
+            log(f"Loaded {len(solar_system_jumps_df)} solar system jumps")
             log("")
 
             # Create regions table
@@ -173,10 +182,88 @@ def import_static_data(callback=None):
                     marketGroupName VARCHAR(255),
                     description TEXT,
                     iconID INT,
-                    hasTypes TINYINT(1)                    
+                    hasTypes TINYINT(1)
                 )
             """)
             log("Table 'market_groups' created or already exists")
+            log("")
+
+            # Create stations table
+            log("Creating stations table...")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS stations (
+                    stationID BIGINT PRIMARY KEY,
+                    security DOUBLE,
+                    dockingCostPerVolume DOUBLE,
+                    maxShipVolumeDockable DOUBLE,
+                    officeRentalCost BIGINT,
+                    operationID INT,
+                    stationTypeID INT,
+                    corporationID BIGINT,
+                    solarSystemID BIGINT,
+                    constellationID BIGINT,
+                    regionID BIGINT,
+                    stationName VARCHAR(255),
+                    x DOUBLE,
+                    y DOUBLE,
+                    z DOUBLE,
+                    reprocessingEfficiency DOUBLE,
+                    reprocessingStationsTake DOUBLE,
+                    reprocessingHangarFlag INT
+                )
+            """)
+            log("Table 'stations' created or already exists")
+            log("")
+
+            # Create solar_systems table
+            log("Creating solar_systems table...")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS solar_systems (
+                    solarSystemID BIGINT PRIMARY KEY,
+                    regionID BIGINT,
+                    constellationID BIGINT,
+                    solarSystemName VARCHAR(255),
+                    x DOUBLE,
+                    y DOUBLE,
+                    z DOUBLE,
+                    xMin DOUBLE,
+                    xMax DOUBLE,
+                    yMin DOUBLE,
+                    yMax DOUBLE,
+                    zMin DOUBLE,
+                    zMax DOUBLE,
+                    luminosity DOUBLE,
+                    border TINYINT(1),
+                    fringe TINYINT(1),
+                    corridor TINYINT(1),
+                    hub TINYINT(1),
+                    international TINYINT(1),
+                    regional TINYINT(1),
+                    constellation TINYINT(1),
+                    security DOUBLE,
+                    factionID INT,
+                    radius DOUBLE,
+                    sunTypeID INT,
+                    securityClass VARCHAR(10)
+                )
+            """)
+            log("Table 'solar_systems' created or already exists")
+            log("")
+
+            # Create solar_system_jumps table
+            log("Creating solar_system_jumps table...")
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS solar_system_jumps (
+                    fromRegionID BIGINT,
+                    fromConstellationID BIGINT,
+                    fromSolarSystemID BIGINT,
+                    toSolarSystemID BIGINT,
+                    toConstellationID BIGINT,
+                    toRegionID BIGINT,
+                    PRIMARY KEY (fromSolarSystemID, toSolarSystemID)
+                )
+            """)
+            log("Table 'solar_system_jumps' created or already exists")
             log("")
 
             # Clear existing data
@@ -184,6 +271,9 @@ def import_static_data(callback=None):
             cursor.execute("TRUNCATE TABLE regions")
             cursor.execute("TRUNCATE TABLE types")
             cursor.execute("TRUNCATE TABLE market_groups")
+            cursor.execute("TRUNCATE TABLE stations")
+            cursor.execute("TRUNCATE TABLE solar_systems")
+            cursor.execute("TRUNCATE TABLE solar_system_jumps")
             log("Tables cleared")
             log("")
 
@@ -236,6 +326,57 @@ def import_static_data(callback=None):
                     log(f"  Imported {type_count}/{len(types_df)} market groups...")
 
             log(f"Successfully imported {type_count} market groups")
+            log("")
+
+            # Import stations
+            log("Importing stations data...")
+            station_count = 0
+            for index, row in stations_df.iterrows():
+                values = tuple(None if pd.isna(val) else val for val in row)
+                placeholders = ', '.join(['%s'] * len(row))
+                columns = ', '.join(row.index)
+                sql = f"INSERT INTO stations ({columns}) VALUES ({placeholders})"
+                cursor.execute(sql, values)
+                station_count += 1
+
+                if station_count % 500 == 0:
+                    log(f"  Imported {station_count}/{len(stations_df)} stations...")
+
+            log(f"Successfully imported {station_count} stations")
+            log("")
+
+            # Import solar systems
+            log("Importing solar_systems data...")
+            solar_system_count = 0
+            for index, row in solar_systems_df.iterrows():
+                values = tuple(None if pd.isna(val) else val for val in row)
+                placeholders = ', '.join(['%s'] * len(row))
+                columns = ', '.join(row.index)
+                sql = f"INSERT INTO solar_systems ({columns}) VALUES ({placeholders})"
+                cursor.execute(sql, values)
+                solar_system_count += 1
+
+                if solar_system_count % 500 == 0:
+                    log(f"  Imported {solar_system_count}/{len(solar_systems_df)} solar systems...")
+
+            log(f"Successfully imported {solar_system_count} solar systems")
+            log("")
+
+            # Import solar system jumps
+            log("Importing solar_system_jumps data...")
+            jump_count = 0
+            for index, row in solar_system_jumps_df.iterrows():
+                values = tuple(None if pd.isna(val) else val for val in row)
+                placeholders = ', '.join(['%s'] * len(row))
+                columns = ', '.join(row.index)
+                sql = f"INSERT INTO solar_system_jumps ({columns}) VALUES ({placeholders})"
+                cursor.execute(sql, values)
+                jump_count += 1
+
+                if jump_count % 1000 == 0:
+                    log(f"  Imported {jump_count}/{len(solar_system_jumps_df)} jumps...")
+
+            log(f"Successfully imported {jump_count} solar system jumps")
             log("")
 
             # Commit transaction

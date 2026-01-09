@@ -8,7 +8,8 @@ from src.ui import (
     SettingsScreen,
     CharacterScreen,
     AppBar,
-    AccountingToolScreen
+    AccountingToolScreen,
+    CourierPathFinderScreen
 )
 from src.app import EVEMarketApp
 from src.database import load_regions_and_items, create_tables, get_setting
@@ -35,6 +36,7 @@ class MainApp:
         self.character_screen = None
         self.update_data_screen = None
         self.accounting_tool_screen = None
+        self.courier_path_finder_screen = None
 
         # App bar
         self.app_bar = None
@@ -120,6 +122,8 @@ class MainApp:
             self.show_trade_opportunities()
         elif menu_key == "accounting_tool":
             self.show_accounting_tool()
+        elif menu_key == "courier_path_finder":
+            self.show_courier_path_finder()
 
     def show_update_data_screen(self):
         """Show update static data screen"""
@@ -321,6 +325,33 @@ class MainApp:
         if self.accounting_tool_screen:
             self.accounting_tool_screen.stop_file_monitoring()
         self.show_main_menu()
+
+    def show_courier_path_finder(self):
+        """Show courier path finder screen"""
+        self.page.controls.clear()
+
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_character_click=self.show_character,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
+
+        self.courier_path_finder_screen = CourierPathFinderScreen(
+            page=self.page,
+            on_back_callback=self.show_main_menu
+        )
+
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.courier_path_finder_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
+        self.page.update()
 
     def on_logout(self):
         """Handle logout - refresh app bar"""

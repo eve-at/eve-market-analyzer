@@ -535,3 +535,45 @@ def get_character_location(character_id, access_token):
         if connection and connection.is_connected():
             cursor.close()
             connection.close()
+
+
+def set_autopilot_waypoints(station_ids, access_token):
+    """Set autopilot waypoints in-game via ESI API
+
+    Args:
+        station_ids: List of station IDs to set as waypoints
+        access_token: Valid access token
+
+    Returns:
+        dict: {'success': bool, 'error': str (optional)}
+    """
+    try:
+        url = "https://esi.evetech.net/latest/ui/autopilot/waypoint/"
+
+        for i, station_id in enumerate(station_ids):
+            # First waypoint: clear other waypoints and add to beginning
+            # Subsequent waypoints: add to end
+            is_first = (i == 0)
+
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+            params = {
+                "add_to_beginning": "true" if is_first else "false",
+                "clear_other_waypoints": "true" if is_first else "false",
+                "destination_id": station_id,
+                "datasource": "tranquility"
+            }
+
+            response = requests.post(url, headers=headers, params=params, timeout=10)
+
+            # ESI returns 204 No Content on success
+            if response.status_code not in [204, 200]:
+                response.raise_for_status()
+
+        return {'success': True}
+
+    except Exception as e:
+        print(f"Error setting autopilot waypoints: {e}")
+        return {'success': False, 'error': str(e)}

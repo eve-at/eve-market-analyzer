@@ -1,5 +1,4 @@
 """Static data import handler"""
-import pandas as pd
 import mysql.connector
 from mysql.connector import Error
 import requests
@@ -111,6 +110,8 @@ def import_static_data(callback=None):
 
             # Read CSV files
             log("Reading CSV files...")
+            # Import pandas only when needed
+            import pandas as pd
             regions_df = pd.read_csv(regions_file)
             types_df = pd.read_csv(types_file)
             market_groups_df = pd.read_csv(market_groups_file)

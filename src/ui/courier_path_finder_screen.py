@@ -2,7 +2,7 @@
 import flet as ft
 from src.handlers.courier_path_handler import (
     search_solar_systems, search_stations, optimize_courier_route,
-    get_character_location, refresh_access_token
+    get_character_location, refresh_access_token, set_autopilot_waypoints
 )
 from src.database.models import get_current_character_id, get_character, save_character
 import threading
@@ -87,6 +87,13 @@ class CourierPathFinderScreen:
             )
         )
 
+        # Auto set ingame checkbox (only visible if logged in)
+        self.auto_set_checkbox = ft.Checkbox(
+            label="Auto set ingame",
+            value=True,
+            visible=self.is_logged_in
+        )
+
         # Results container
         self.results_container = ft.Container(
             visible=False,
@@ -119,7 +126,10 @@ class CourierPathFinderScreen:
 
         # Right column - optimize button and results
         right_column = ft.Column([
-            self.optimize_button,
+            ft.Row([
+                self.optimize_button,
+                self.auto_set_checkbox,
+            ], spacing=5, expand=True),
             ft.Container(height=20),
             self.results_container
         ], spacing=5, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -528,6 +538,38 @@ class CourierPathFinderScreen:
         # Run optimization in background thread
         def optimize_thread():
             result = optimize_courier_route(self.start_system_id, destination_ids)
+
+            # If auto set ingame is checked and user is logged in, set waypoints
+            if result['success'] and self.auto_set_checkbox.value and self.is_logged_in:
+                # Get station IDs from route in order
+                station_ids = [station['station_id'] for station in result['route']]
+
+                # Refresh token if needed
+                if self.character:
+                    access_token = self.character.get('access_token')
+                    token_expiry = self.character.get('token_expiry')
+
+                    # Check if token is expired
+                    if token_expiry and datetime.now() >= token_expiry:
+                        token_result = refresh_access_token(self.character.get('refresh_token'))
+                        if token_result:
+                            access_token = token_result['access_token']
+                            # Update character data
+                            self.character['access_token'] = access_token
+                            self.character['token_expiry'] = token_result['token_expiry']
+                            save_character(
+                                self.character_id,
+                                self.character['character_name'],
+                                access_token,
+                                self.character['refresh_token'],
+                                token_result['token_expiry']
+                            )
+
+                    # Set waypoints via ESI
+                    if access_token:
+                        waypoint_result = set_autopilot_waypoints(station_ids, access_token)
+                        if not waypoint_result['success']:
+                            print(f"Failed to set waypoints: {waypoint_result.get('error')}")
 
             # Update UI after completion
             async def update_ui():

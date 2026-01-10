@@ -49,25 +49,25 @@ class MainMenu:
             card = ft.Card(
                 content=ft.Container(
                     content=ft.Column([
-                        ft.Icon(item["icon"], size=48, color=ft.Colors.BLUE),
+                        ft.Icon(item["icon"], size=32, color=ft.Colors.BLUE),
                         ft.Container(height=10),
                         ft.Text(
                             item["title"],
-                            size=18,
+                            size=16,
                             weight=ft.FontWeight.BOLD,
                             text_align=ft.TextAlign.CENTER
                         ),
                         ft.Container(height=5),
                         ft.Text(
                             item["description"],
-                            size=12,
+                            size=10,
                             color=ft.Colors.GREY_700,
                             text_align=ft.TextAlign.CENTER
                         )
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                    padding=30,
-                    width=300,
-                    height=200,
+                    padding=10,
+                    width=240,
+                    height=160,
                     ink=True,
                     on_click=lambda e, key=item["key"]: self.on_menu_select(key)
                 ),
@@ -95,17 +95,14 @@ class MainMenu:
                 ft.Container(height=30),
                 ft.Row([
                     menu_cards[0],
-                    menu_cards[1]
-                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
-                ft.Container(height=20),
-                ft.Row([
+                    menu_cards[1],
                     menu_cards[2],
-                    menu_cards[3]
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
                 ft.Container(height=20),
                 ft.Row([
+                    menu_cards[3],
                     menu_cards[4]
-                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),                
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=20,
             expand=True

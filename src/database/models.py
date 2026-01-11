@@ -822,3 +822,51 @@ def get_profit_by_items(character_id, date_from, date_to):
         if connection and connection.is_connected():
             cursor.close()
             connection.close()
+
+
+def get_last_buy_price(character_id, type_id):
+    """Get last buy order price for a specific item type
+
+    Args:
+        character_id: Character ID
+        type_id: Item type ID
+
+    Returns:
+        float: Price from the most recent buy order, or None if not found
+    """
+    connection = None
+    try:
+        db_config = _get_db_config()
+        connection = mysql.connector.connect(**db_config)
+
+        if connection.is_connected():
+            cursor = connection.cursor()
+
+            table_name = f"character_history_{character_id}"
+
+            # Get most recent buy order for this type_id
+            query = f"""
+                SELECT price
+                FROM `{table_name}`
+                WHERE type_id = %s AND is_buy_order = 1
+                ORDER BY issued DESC
+                LIMIT 1
+            """
+
+            cursor.execute(query, (type_id,))
+            result = cursor.fetchone()
+
+            if result:
+                return float(result[0])
+            return None
+
+    except Error as e:
+        print(f"Database error while getting last buy price: {e}")
+        return None
+    except Exception as e:
+        print(f"Error while getting last buy price: {e}")
+        return None
+    finally:
+        if connection and connection.is_connected():
+            cursor.close()
+            connection.close()

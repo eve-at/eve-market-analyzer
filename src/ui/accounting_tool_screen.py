@@ -8,7 +8,7 @@ from src.utils.price_calculator import (
     get_next_sell_tick, get_next_buy_tick,
     calculate_profit, count_competitors
 )
-from src.database.models import get_current_character_id, get_character
+from src.database.models import get_current_character_id, get_character, get_last_buy_price
 
 
 class AccountingToolScreen:
@@ -31,9 +31,11 @@ class AccountingToolScreen:
         self.broker_fee_sell = 3.0
         self.broker_fee_buy = 3.0
         self.sales_tax = 7.5
+        self.character_id = None
 
         character_id = get_current_character_id()
         if character_id:
+            self.character_id = character_id
             character = get_character(character_id)
             if character:
                 self.broker_fee_sell = float(character.get('broker_fee_sell', 3.0))
@@ -108,7 +110,7 @@ class AccountingToolScreen:
             weight=ft.FontWeight.W_500
         )
 
-        # Profit display
+        # Profit display (spread-based)
         self.profit_percent_text = ft.Text(
             "-%",
             size=32,
@@ -118,6 +120,28 @@ class AccountingToolScreen:
         self.profit_isk_text = ft.Text(
             "- ISK",
             size=16,
+            weight=ft.FontWeight.BOLD,
+            color=ft.Colors.GREEN
+        )
+
+        # Last buy price display
+        self.last_buy_price_text = ft.Text(
+            "Last Buy Price: -",
+            size=14,
+            weight=ft.FontWeight.W_500,
+            color=ft.Colors.BLUE_600
+        )
+
+        # Profit from buy price display
+        self.profit_from_buy_percent_text = ft.Text(
+            "-%",
+            size=24,
+            weight=ft.FontWeight.BOLD,
+            color=ft.Colors.GREEN
+        )
+        self.profit_from_buy_isk_text = ft.Text(
+            "- ISK",
+            size=14,
             weight=ft.FontWeight.BOLD,
             color=ft.Colors.GREEN
         )
@@ -175,10 +199,29 @@ class AccountingToolScreen:
                 self.price_to_copy_radio,
                 ft.Container(height=15),
 
-                # Profit
-                ft.Text("Profit Analysis:", size=14, weight=ft.FontWeight.W_500),
-                self.profit_percent_text,
-                self.profit_isk_text,
+                # Profit Analysis and Competitors side by side
+                ft.Row([
+                    # Left column - Profit Analysis
+                    ft.Column([
+                        ft.Text("Profit Analysis (Spread):", size=14, weight=ft.FontWeight.W_500),
+                        self.profit_percent_text,
+                        self.profit_isk_text,
+                    ], spacing=5, expand=True),
+
+                    # Right column - Competitors
+                    ft.Column([
+                        ft.Text("Competitors:", size=14, weight=ft.FontWeight.W_500),
+                        self.competitors_sell_text,
+                        self.competitors_buy_text
+                    ], spacing=5, expand=True)
+                ], spacing=20),
+                ft.Container(height=10),
+
+                # Last buy price and profit from it
+                self.last_buy_price_text,
+                ft.Text("Profit from Last Buy:", size=14, weight=ft.FontWeight.W_500),
+                self.profit_from_buy_percent_text,
+                self.profit_from_buy_isk_text,
                 ft.Container(height=10),
 
                 # Fees breakdown (with percentages integrated)
@@ -188,14 +231,7 @@ class AccountingToolScreen:
                     self.broker_fee_buy_isk_text,
                     self.sales_tax_isk_text
                 ], spacing=2),
-                ft.Container(height=15),
-
-                # Competitors (moved to bottom)
-                ft.Text("Competitors:", size=14, weight=ft.FontWeight.W_500),
-                ft.Column([
-                    self.competitors_sell_text,
-                    self.competitors_buy_text
-                ], spacing=2)
+                ft.Container(height=15)
 
             ], spacing=5, scroll=ft.ScrollMode.AUTO),
             padding=20,
@@ -335,6 +371,50 @@ class AccountingToolScreen:
 
         self.competitors_buy_text.value = f"Competitors (Buy): {buy_competitors}"
         self.competitors_buy_text.color = ft.Colors.GREEN if buy_competitors < 10 else ft.Colors.RED
+
+        # Get last buy price and calculate profit from it
+        if self.character_id and self.current_type_id:
+            last_buy_price = get_last_buy_price(self.character_id, self.current_type_id)
+
+            if last_buy_price:
+                # Display last buy price
+                self.last_buy_price_text.value = f"Last Buy Price: {int(last_buy_price):,} ISK"
+                self.last_buy_price_text.visible = True
+
+                # Calculate profit from last buy to current sell
+                # Sell price after fees
+                sell_after_fees = next_sell * (1 - (self.broker_fee_sell / 100) - (self.sales_tax / 100))
+                # Buy price with fees (what we paid)
+                buy_with_fees = last_buy_price * (1 + (self.broker_fee_buy / 100))
+
+                # Profit
+                profit_isk = sell_after_fees - buy_with_fees
+                profit_percent = (profit_isk / buy_with_fees) * 100 if buy_with_fees > 0 else 0
+
+                # Update profit from buy display
+                self.profit_from_buy_percent_text.value = f"{profit_percent:.0f}%"
+                self.profit_from_buy_isk_text.value = f"{int(profit_isk):,} ISK"
+                self.profit_from_buy_percent_text.visible = True
+                self.profit_from_buy_isk_text.visible = True
+
+                # Set color based on profit percentage
+                if profit_percent >= 5:
+                    self.profit_from_buy_percent_text.color = ft.Colors.GREEN
+                    self.profit_from_buy_isk_text.color = ft.Colors.GREEN
+                else:
+                    self.profit_from_buy_percent_text.color = ft.Colors.RED
+                    self.profit_from_buy_isk_text.color = ft.Colors.RED
+            else:
+                # No last buy price found
+                self.last_buy_price_text.value = "Last Buy Price: Not found"
+                self.last_buy_price_text.visible = True
+                self.profit_from_buy_percent_text.visible = False
+                self.profit_from_buy_isk_text.visible = False
+        else:
+            # Not logged in or no type_id
+            self.last_buy_price_text.visible = False
+            self.profit_from_buy_percent_text.visible = False
+            self.profit_from_buy_isk_text.visible = False
 
         self.page.update()
 

@@ -6,7 +6,8 @@ from src.handlers.export_file_handler import ExportFileHandler
 from src.utils.export_parser import parse_export_file
 from src.utils.price_calculator import (
     get_next_sell_tick, get_next_buy_tick,
-    calculate_profit, count_competitors
+    calculate_profit, count_competitors,
+    round_to_valid_price, adjust_price_by_scroll
 )
 from src.database.models import get_current_character_id, get_character, get_last_buy_price
 
@@ -75,16 +76,35 @@ class AccountingToolScreen:
         self.min_sell_field = ft.TextField(
             label="Min. Sell Price",
             value="",
-            read_only=True,
+            read_only=False,
             width=200,
-            on_click=self.on_min_sell_field_click
+            on_click=self.on_min_sell_field_click,
+            on_change=self.on_min_sell_field_change,
+            on_submit=self.on_min_sell_field_submit,
+            keyboard_type=ft.KeyboardType.NUMBER
         )
+
+        # Wrap min_sell_field with GestureDetector for scroll support
+        self.min_sell_container = ft.GestureDetector(
+            content=self.min_sell_field,
+            on_scroll=self.on_min_sell_scroll
+        )
+
         self.max_buy_field = ft.TextField(
             label="Max. Buy Price",
             value="",
-            read_only=True,
+            read_only=False,
             width=200,
-            on_click=self.on_max_buy_field_click
+            on_click=self.on_max_buy_field_click,
+            on_change=self.on_max_buy_field_change,
+            on_submit=self.on_max_buy_field_submit,
+            keyboard_type=ft.KeyboardType.NUMBER
+        )
+
+        # Wrap max_buy_field with GestureDetector for scroll support
+        self.max_buy_container = ft.GestureDetector(
+            content=self.max_buy_field,
+            on_scroll=self.on_max_buy_scroll
         )
 
         # Radio group for price to copy
@@ -189,8 +209,8 @@ class AccountingToolScreen:
 
                 # Price fields
                 ft.Row([
-                    self.min_sell_field,
-                    self.max_buy_field
+                    self.min_sell_container,
+                    self.max_buy_container
                 ], spacing=20),
                 ft.Container(height=15),
 
@@ -269,6 +289,148 @@ class AccountingToolScreen:
         async def copy_async():
             await self.copy_price_to_clipboard(price_type=current_price_type)
         self.page.run_task(copy_async)
+
+    def on_min_sell_field_change(self, e):
+        """Handle manual change of Min. Sell Price field"""
+        try:
+            # Remove commas and parse
+            value_str = e.control.value.replace(',', '').strip()
+            if not value_str:
+                return
+
+            new_price = float(value_str)
+            if new_price <= 0:
+                return
+
+            # Update internal value
+            self.current_min_sell = new_price
+        except ValueError:
+            # Invalid input, ignore
+            pass
+
+    def on_min_sell_field_submit(self, e):
+        """Handle submit (Enter key) on Min. Sell Price field"""
+        try:
+            # Remove commas and parse
+            value_str = e.control.value.replace(',', '').strip()
+            if not value_str:
+                return
+
+            new_price = float(value_str)
+            if new_price <= 0:
+                return
+
+            # Round to valid EVE price
+            new_price = round_to_valid_price(new_price)
+
+            # Update internal value and recalculate
+            self.current_min_sell = new_price
+
+            # Update display
+            next_sell = get_next_sell_tick(new_price)
+            e.control.value = f"{int(next_sell):,}"
+
+            # Recalculate profit
+            self.update_calculations()
+        except ValueError:
+            # Invalid input, revert to current value
+            if self.current_min_sell is not None:
+                next_sell = get_next_sell_tick(self.current_min_sell)
+                e.control.value = f"{int(next_sell):,}"
+                self.page.update()
+
+    def on_max_buy_field_change(self, e):
+        """Handle manual change of Max. Buy Price field"""
+        try:
+            # Remove commas and parse
+            value_str = e.control.value.replace(',', '').strip()
+            if not value_str:
+                return
+
+            new_price = float(value_str)
+            if new_price <= 0:
+                return
+
+            # Update internal value
+            self.current_max_buy = new_price
+        except ValueError:
+            # Invalid input, ignore
+            pass
+
+    def on_max_buy_field_submit(self, e):
+        """Handle submit (Enter key) on Max. Buy Price field"""
+        try:
+            # Remove commas and parse
+            value_str = e.control.value.replace(',', '').strip()
+            if not value_str:
+                return
+
+            new_price = float(value_str)
+            if new_price <= 0:
+                return
+
+            # Round to valid EVE price
+            new_price = round_to_valid_price(new_price)
+
+            # Update internal value and recalculate
+            self.current_max_buy = new_price
+
+            # Update display
+            next_buy = get_next_buy_tick(new_price)
+            e.control.value = f"{int(next_buy):,}"
+
+            # Recalculate profit
+            self.update_calculations()
+        except ValueError:
+            # Invalid input, revert to current value
+            if self.current_max_buy is not None:
+                next_buy = get_next_buy_tick(self.current_max_buy)
+                e.control.value = f"{int(next_buy):,}"
+                self.page.update()
+
+    def on_min_sell_scroll(self, e: ft.ScrollEvent):
+        """Handle scroll on Min. Sell Price field"""
+        if self.current_min_sell is None:
+            return
+
+        # Get scroll direction (scroll_delta is an Offset object with y property)
+        # Positive y = scroll down (decrease price), negative y = scroll up (increase price)
+        scroll_delta = -e.scroll_delta.y
+
+        # Adjust price by scroll
+        new_price = adjust_price_by_scroll(self.current_min_sell, scroll_delta)
+
+        # Update internal value
+        self.current_min_sell = new_price
+
+        # Update display
+        next_sell = get_next_sell_tick(new_price)
+        self.min_sell_field.value = f"{int(next_sell):,}"
+
+        # Recalculate profit
+        self.update_calculations()
+
+    def on_max_buy_scroll(self, e: ft.ScrollEvent):
+        """Handle scroll on Max. Buy Price field"""
+        if self.current_max_buy is None:
+            return
+
+        # Get scroll direction (scroll_delta is an Offset object with y property)
+        # Positive y = scroll down (decrease price), negative y = scroll up (increase price)
+        scroll_delta = -e.scroll_delta.y
+
+        # Adjust price by scroll
+        new_price = adjust_price_by_scroll(self.current_max_buy, scroll_delta)
+
+        # Update internal value
+        self.current_max_buy = new_price
+
+        # Update display
+        next_buy = get_next_buy_tick(new_price)
+        self.max_buy_field.value = f"{int(next_buy):,}"
+
+        # Recalculate profit
+        self.update_calculations()
 
     def on_export_file_created(self, file_path, region_name, item_name):
         """Callback when new export file is detected"""
@@ -445,6 +607,11 @@ class AccountingToolScreen:
 
     def start_file_monitoring(self):
         """Start monitoring market logs directory"""
+        # Stop existing observer if running
+        if self.observer and self.observer.is_alive():
+            print("Observer already running, stopping it first...")
+            self.stop_file_monitoring()
+
         # Get market logs directory from settings
         from src.database import get_setting
         from settings import MARKETLOGS_DIR
@@ -466,9 +633,14 @@ class AccountingToolScreen:
     def stop_file_monitoring(self):
         """Stop monitoring market logs directory"""
         if self.observer:
-            self.observer.stop()
-            self.observer.join()
-            print("Market logs directory monitoring stopped")
+            try:
+                self.observer.stop()
+                self.observer.join(timeout=2)
+                print("Market logs directory monitoring stopped")
+            except Exception as e:
+                print(f"Error stopping observer: {e}")
+            finally:
+                self.observer = None
 
     def build(self):
         """Build and return the UI container"""

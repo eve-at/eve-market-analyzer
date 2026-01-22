@@ -163,3 +163,66 @@ def count_competitors(orders, is_sell_order, days_threshold=2):
             continue
 
     return count
+
+
+def round_to_valid_price(price):
+    """
+    Round price to valid EVE Online price (only first 4 significant digits can be non-zero)
+
+    Examples:
+    - 123456789 -> 123400000 (only first 4 digits: 1,2,3,4)
+    - 734567 -> 734500 (only first 4 digits: 7,3,4,5)
+    - 999 -> 999 (less than 4 digits, no change)
+    - 1001 -> 1001 (exactly 4 digits, no change)
+
+    Args:
+        price: Price to round
+
+    Returns:
+        float: Rounded price
+    """
+    if price < 1000:
+        # Less than 4 digits, no rounding needed
+        return price
+
+    import math
+
+    # Get number of digits
+    num_digits = int(math.log10(price)) + 1
+
+    # Round to 4 significant figures
+    # Calculate the divisor to keep only 4 significant digits
+    divisor = 10 ** (num_digits - 4)
+
+    # Round down to the divisor
+    rounded = (int(price / divisor)) * divisor
+
+    return rounded
+
+
+def adjust_price_by_scroll(current_price, scroll_delta):
+    """
+    Adjust price by scroll wheel delta, changing the 4th significant digit
+
+    Args:
+        current_price: Current price value
+        scroll_delta: Positive for scroll up (increase), negative for scroll down (decrease)
+
+    Returns:
+        float: New adjusted price
+    """
+    if scroll_delta == 0:
+        return current_price
+
+    tick_size = calculate_tick_size(current_price)
+
+    if scroll_delta > 0:
+        # Scroll up - increase price
+        new_price = current_price + tick_size
+    else:
+        # Scroll down - decrease price
+        new_price = current_price - tick_size
+        if new_price < 0.01:
+            new_price = 0.01
+
+    return round_to_valid_price(new_price)

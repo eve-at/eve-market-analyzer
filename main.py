@@ -292,6 +292,10 @@ class MainApp:
 
     def show_accounting_tool(self):
         """Show accounting tool screen"""
+        # Stop existing observer if there's an old accounting_tool_screen
+        if self.accounting_tool_screen:
+            self.accounting_tool_screen.stop_file_monitoring()
+
         self.page.controls.clear()
 
         # Create app bar with back button

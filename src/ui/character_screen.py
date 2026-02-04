@@ -132,7 +132,7 @@ class CharacterScreen:
 
         # Update Historical Orders button
         self.update_orders_button = ft.ElevatedButton(
-            "Update Historical Orders",
+            "Pull Character's Orders",
             on_click=self.on_update_orders,
             visible=bool(self.current_character),
             style=ft.ButtonStyle(
@@ -158,15 +158,7 @@ class CharacterScreen:
         )
 
         # Profit Reports UI Elements
-        self.report_type_radio = ft.RadioGroup(
-            content=ft.Column([
-                ft.Radio(value="months", label="Profit by Months"),
-                ft.Radio(value="days", label="Profit by Days"),
-                ft.Radio(value="items", label="Profit by Items")
-            ]),
-            value="months",
-            on_change=self.on_report_type_change
-        )
+        self.report_type = "months"  # Track current report type
 
         # Date range pickers (hidden by default for months view)
         date_to = datetime.now()
@@ -217,8 +209,6 @@ class CharacterScreen:
 
         self.report_container = ft.Container(
             content=ft.Column([
-                ft.Text("Select a report type and generate to view data", size=14, color=ft.Colors.GREY_600),
-                ft.Container(height=10),
                 self.report_table
             ], scroll=ft.ScrollMode.AUTO),
             expand=True
@@ -273,8 +263,6 @@ class CharacterScreen:
         self.profit_reports_content = ft.Container(
             content=ft.Column([
                 ft.Container(height=10),
-                self.report_type_radio,
-                ft.Container(height=10),
                 ft.Row([
                     self.date_from_picker,
                     ft.Container(width=10),
@@ -304,18 +292,38 @@ class CharacterScreen:
             ink=True
         )
 
-        self.reports_tab_button = ft.Container(
-            content=ft.Text("Profit Reports", size=14),
+        self.months_tab_button = ft.Container(
+            content=ft.Text("Profit by Month", size=14),
             padding=ft.Padding(15, 10, 15, 10),
             bgcolor=ft.Colors.GREY_300,
             border_radius=ft.border_radius.only(top_left=5, top_right=5),
-            on_click=lambda _: self.switch_tab("reports"),
+            on_click=lambda _: self.switch_tab("months"),
+            ink=True
+        )
+
+        self.days_tab_button = ft.Container(
+            content=ft.Text("Profit by Days", size=14),
+            padding=ft.Padding(15, 10, 15, 10),
+            bgcolor=ft.Colors.GREY_300,
+            border_radius=ft.border_radius.only(top_left=5, top_right=5),
+            on_click=lambda _: self.switch_tab("days"),
+            ink=True
+        )
+
+        self.items_tab_button = ft.Container(
+            content=ft.Text("Profit by Items", size=14),
+            padding=ft.Padding(15, 10, 15, 10),
+            bgcolor=ft.Colors.GREY_300,
+            border_radius=ft.border_radius.only(top_left=5, top_right=5),
+            on_click=lambda _: self.switch_tab("items"),
             ink=True
         )
 
         self.tab_buttons_row = ft.Row([
             self.orders_tab_button,
-            self.reports_tab_button
+            self.months_tab_button,
+            self.days_tab_button,
+            self.items_tab_button
         ], spacing=2)
 
         # Tabs container to hold both tab bar and content
@@ -335,9 +343,7 @@ class CharacterScreen:
                     ft.Container(width=50),
                     trading_settings_column
                 ], spacing=0, alignment=ft.MainAxisAlignment.START, vertical_alignment=ft.CrossAxisAlignment.START),
-                ft.Container(height=10),
                 self.status_text,
-                ft.Container(height=20),
                 # Tabs for Orders and Reports
                 self.tabs_container
             ], spacing=5, scroll=ft.ScrollMode.AUTO, expand=True),
@@ -626,45 +632,43 @@ class CharacterScreen:
         """Switch between tabs"""
         self.active_tab = tab_name
 
+        # Update all tab button styles
+        tabs = {
+            "orders": self.orders_tab_button,
+            "months": self.months_tab_button,
+            "days": self.days_tab_button,
+            "items": self.items_tab_button
+        }
+
+        for name, tab in tabs.items():
+            if name == tab_name:
+                tab.bgcolor = ft.Colors.BLUE
+                tab.content.weight = ft.FontWeight.BOLD
+            else:
+                tab.bgcolor = ft.Colors.GREY_300
+                tab.content.weight = ft.FontWeight.NORMAL
+
+        # Show/hide content based on tab
         if tab_name == "orders":
-            # Orders Import tab
             self.orders_import_content.visible = True
             self.profit_reports_content.visible = False
-            # Update button styles
-            self.orders_tab_button.bgcolor = ft.Colors.BLUE
-            self.orders_tab_button.content.weight = ft.FontWeight.BOLD
-            self.reports_tab_button.bgcolor = ft.Colors.GREY_300
-            self.reports_tab_button.content.weight = ft.FontWeight.NORMAL
-        elif tab_name == "reports":
-            # Profit Reports tab
+        else:
+            # All profit tabs use the same content container
             self.orders_import_content.visible = False
             self.profit_reports_content.visible = True
-            # Update button styles
-            self.orders_tab_button.bgcolor = ft.Colors.GREY_300
-            self.orders_tab_button.content.weight = ft.FontWeight.NORMAL
-            self.reports_tab_button.bgcolor = ft.Colors.BLUE
-            self.reports_tab_button.content.weight = ft.FontWeight.BOLD
-            # Auto-generate months report if on reports tab
-            if self.report_type_radio.value == "months":
+            self.report_type = tab_name
+
+            # Show/hide date pickers and generate button based on report type
+            if tab_name == "months":
+                self.date_from_picker.visible = False
+                self.date_to_picker.visible = False
+                self.generate_report_button.visible = False
+                # Auto-generate report for months
                 self._load_profit_report()
-
-        self.page.update()
-
-    def on_report_type_change(self, e):
-        """Handle report type radio button change"""
-        report_type = self.report_type_radio.value
-
-        # Show/hide date pickers and generate button based on report type
-        if report_type == "months":
-            self.date_from_picker.visible = False
-            self.date_to_picker.visible = False
-            self.generate_report_button.visible = False
-            # Auto-generate report for months
-            self._load_profit_report()
-        else:
-            self.date_from_picker.visible = True
-            self.date_to_picker.visible = True
-            self.generate_report_button.visible = True
+            else:
+                self.date_from_picker.visible = True
+                self.date_to_picker.visible = True
+                self.generate_report_button.visible = True
 
         self.page.update()
 
@@ -722,7 +726,7 @@ class CharacterScreen:
         """Generate report in background thread"""
         try:
             character_id = self.current_character['character_id']
-            report_type = self.report_type_radio.value
+            report_type = self.report_type
 
             if report_type == "months":
                 data = get_profit_by_months(character_id)

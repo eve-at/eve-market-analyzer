@@ -684,20 +684,34 @@ def get_profit_by_months(character_id):
             profit_table = f"character_profit_{character_id}"
 
             # Get monthly aggregated data
+            # Use separate subqueries to avoid JOIN multiplication issue
             cursor.execute(f"""
                 SELECT
-                    DATE_FORMAT(p.sell_date, '%Y-%m') as month,
-                    COUNT(DISTINCT CASE WHEN h.is_buy_order = 1 THEN h.order_id END) as buy_orders,
-                    COUNT(DISTINCT p.sell_order_id) as sell_orders,
-                    SUM(p.sell_price * p.quantity) as total_sales,
-                    SUM(p.broker_fee_sell + p.sales_tax) as total_taxes,
-                    SUM(p.net_profit) as total_profit
-                FROM `{profit_table}` p
-                LEFT JOIN `{history_table}` h ON h.type_id = p.type_id
-                    AND h.is_buy_order = 1
-                    AND DATE_FORMAT(h.issued, '%Y-%m') = DATE_FORMAT(p.sell_date, '%Y-%m')
-                GROUP BY month
-                ORDER BY month DESC
+                    p.month,
+                    COALESCE(h.buy_orders, 0) as buy_orders,
+                    p.sell_orders,
+                    p.total_sales,
+                    p.total_taxes,
+                    p.total_profit
+                FROM (
+                    SELECT
+                        DATE_FORMAT(sell_date, '%Y-%m') as month,
+                        COUNT(DISTINCT sell_order_id) as sell_orders,
+                        SUM(sell_price * quantity) as total_sales,
+                        SUM(broker_fee_sell + sales_tax) as total_taxes,
+                        SUM(net_profit) as total_profit
+                    FROM `{profit_table}`
+                    GROUP BY month
+                ) p
+                LEFT JOIN (
+                    SELECT
+                        DATE_FORMAT(issued, '%Y-%m') as month,
+                        COUNT(DISTINCT order_id) as buy_orders
+                    FROM `{history_table}`
+                    WHERE is_buy_order = 1
+                    GROUP BY month
+                ) h ON h.month = p.month
+                ORDER BY p.month DESC
             """)
 
             return cursor.fetchall()
@@ -736,22 +750,37 @@ def get_profit_by_days(character_id, date_from, date_to):
             history_table = f"character_history_{character_id}"
             profit_table = f"character_profit_{character_id}"
 
+            # Use separate subqueries to avoid JOIN multiplication issue
             cursor.execute(f"""
                 SELECT
-                    DATE(p.sell_date) as day,
-                    COUNT(DISTINCT CASE WHEN h.is_buy_order = 1 THEN h.order_id END) as buy_orders,
-                    COUNT(DISTINCT p.sell_order_id) as sell_orders,
-                    SUM(p.sell_price * p.quantity) as total_sales,
-                    SUM(p.broker_fee_sell + p.sales_tax) as total_taxes,
-                    SUM(p.net_profit) as total_profit
-                FROM `{profit_table}` p
-                LEFT JOIN `{history_table}` h ON h.type_id = p.type_id
-                    AND h.is_buy_order = 1
-                    AND DATE(h.issued) = DATE(p.sell_date)
-                WHERE DATE(p.sell_date) BETWEEN %s AND %s
-                GROUP BY day
-                ORDER BY day DESC
-            """, (date_from, date_to))
+                    p.day,
+                    COALESCE(h.buy_orders, 0) as buy_orders,
+                    p.sell_orders,
+                    p.total_sales,
+                    p.total_taxes,
+                    p.total_profit
+                FROM (
+                    SELECT
+                        DATE(sell_date) as day,
+                        COUNT(DISTINCT sell_order_id) as sell_orders,
+                        SUM(sell_price * quantity) as total_sales,
+                        SUM(broker_fee_sell + sales_tax) as total_taxes,
+                        SUM(net_profit) as total_profit
+                    FROM `{profit_table}`
+                    WHERE DATE(sell_date) BETWEEN %s AND %s
+                    GROUP BY day
+                ) p
+                LEFT JOIN (
+                    SELECT
+                        DATE(issued) as day,
+                        COUNT(DISTINCT order_id) as buy_orders
+                    FROM `{history_table}`
+                    WHERE is_buy_order = 1
+                        AND DATE(issued) BETWEEN %s AND %s
+                    GROUP BY day
+                ) h ON h.day = p.day
+                ORDER BY p.day DESC
+            """, (date_from, date_to, date_from, date_to))
 
             return cursor.fetchall()
 

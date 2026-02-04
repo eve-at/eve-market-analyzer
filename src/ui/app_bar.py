@@ -104,7 +104,7 @@ class AppBar:
         # Back button (if enabled)
         if self.show_back_button and self.on_back_click:
             back_button = ft.TextButton(
-                "< Back",
+                "< Home",
                 on_click=lambda e: self.on_back_click(),
                 style=ft.ButtonStyle(
                     color=ft.Colors.WHITE

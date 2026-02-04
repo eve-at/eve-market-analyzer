@@ -285,7 +285,7 @@ class CharacterScreen:
 
         self.orders_tab_button = ft.Container(
             content=ft.Text("Orders Import", size=14, weight=ft.FontWeight.BOLD),
-            padding=ft.Padding(15, 10, 15, 10),
+            padding=ft.Padding(15, 5, 15, 5),
             bgcolor=ft.Colors.BLUE,
             border_radius=ft.border_radius.only(top_left=5, top_right=5),
             on_click=lambda _: self.switch_tab("orders"),
@@ -294,7 +294,7 @@ class CharacterScreen:
 
         self.months_tab_button = ft.Container(
             content=ft.Text("Profit by Month", size=14),
-            padding=ft.Padding(15, 10, 15, 10),
+            padding=ft.Padding(15, 5, 15, 5),
             bgcolor=ft.Colors.GREY_300,
             border_radius=ft.border_radius.only(top_left=5, top_right=5),
             on_click=lambda _: self.switch_tab("months"),
@@ -303,7 +303,7 @@ class CharacterScreen:
 
         self.days_tab_button = ft.Container(
             content=ft.Text("Profit by Days", size=14),
-            padding=ft.Padding(15, 10, 15, 10),
+            padding=ft.Padding(15, 5, 15, 5),
             bgcolor=ft.Colors.GREY_300,
             border_radius=ft.border_radius.only(top_left=5, top_right=5),
             on_click=lambda _: self.switch_tab("days"),
@@ -312,7 +312,7 @@ class CharacterScreen:
 
         self.items_tab_button = ft.Container(
             content=ft.Text("Profit by Items", size=14),
-            padding=ft.Padding(15, 10, 15, 10),
+            padding=ft.Padding(15, 5, 15, 5),
             bgcolor=ft.Colors.GREY_300,
             border_radius=ft.border_radius.only(top_left=5, top_right=5),
             on_click=lambda _: self.switch_tab("items"),
@@ -663,14 +663,45 @@ class CharacterScreen:
                 self.date_from_picker.visible = False
                 self.date_to_picker.visible = False
                 self.generate_report_button.visible = False
-                # Auto-generate report for months
-                self._load_profit_report()
             else:
                 self.date_from_picker.visible = True
                 self.date_to_picker.visible = True
                 self.generate_report_button.visible = True
 
+            # Auto-generate report for all profit tabs
+            self._load_profit_report()
+
         self.page.update()
+
+    def navigate_to_tab_with_month(self, tab_name, month_str):
+        """Navigate to a tab with date range set to the specified month
+
+        Args:
+            tab_name: "days" or "items"
+            month_str: Month string in format "YYYY-MM"
+        """
+        import calendar
+
+        # Parse month string
+        year, month = map(int, month_str.split('-'))
+
+        # Get first and last day of month
+        first_day = f"{year}-{month:02d}-01"
+        last_day_num = calendar.monthrange(year, month)[1]
+        last_day = f"{year}-{month:02d}-{last_day_num:02d}"
+
+        # Set date range
+        self.date_from_picker.value = first_day
+        self.date_to_picker.value = last_day
+
+        # Switch to the tab (this will auto-load the report)
+        self.switch_tab(tab_name)
+
+    def navigate_to_day_items(self, day_str):
+        """Navigate to Profit by Items for a specific day"""
+        self.date_from_picker.value = day_str
+        self.date_to_picker.value = day_str
+        self.switch_tab("items")
 
     def _show_date_picker(self, e, picker_type):
         """Show date picker dialog"""
@@ -763,100 +794,211 @@ class CharacterScreen:
 
     def _display_months_report(self, data):
         """Display profit by months report"""
-        self.report_table.columns = [
-            ft.DataColumn(ft.Text("Month", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Buy Orders", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Sell Orders", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Total Sales", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Taxes", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Net Profit", weight=ft.FontWeight.BOLD)),
-        ]
+        # Use custom table with Column/Row for proper row-wide hover
+        self.report_table.visible = False
 
-        self.report_table.rows = []
+        # Create header row
+        header_style = ft.TextStyle(weight=ft.FontWeight.BOLD)
+        header = ft.Container(
+            content=ft.Row([
+                ft.Container(ft.Text("Month", style=header_style), width=150),
+                ft.Container(ft.Text("Buy Orders", style=header_style), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Sell Orders", style=header_style), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Total Sales", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Taxes", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Net Profit", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+            ], spacing=10),
+            bgcolor=ft.Colors.GREY_200,
+            padding=10,
+            border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_400)),
+        )
+
+        # Create data rows
+        rows = [header]
         for row in data:
-            self.report_table.rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(row['month'] or 'N/A')),
-                        ft.DataCell(ft.Text(str(row['buy_orders'] or 0))),
-                        ft.DataCell(ft.Text(str(row['sell_orders'] or 0))),
-                        ft.DataCell(ft.Text(f"{float(row['total_sales'] or 0):,.2f}")),
-                        ft.DataCell(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}")),
-                        ft.DataCell(ft.Text(
-                            f"{float(row['total_profit'] or 0):,.2f}",
-                            color=ft.Colors.GREEN if float(row['total_profit'] or 0) > 0 else ft.Colors.RED
-                        )),
-                    ]
-                )
+            month_str = row['month'] or 'N/A'
+
+            # Create icons for navigation (initially transparent)
+            days_icon = ft.IconButton(
+                icon=ft.Icons.CALENDAR_VIEW_DAY,
+                icon_size=16,
+                tooltip="Show by Days",
+                opacity=0,
+                on_click=lambda _, m=month_str: self.navigate_to_tab_with_month("days", m),
+                style=ft.ButtonStyle(padding=0),
+            )
+            items_icon = ft.IconButton(
+                icon=ft.Icons.LIST_ALT,
+                icon_size=16,
+                tooltip="Show by Items",
+                opacity=0,
+                on_click=lambda _, m=month_str: self.navigate_to_tab_with_month("items", m),
+                style=ft.ButtonStyle(padding=0),
             )
 
+            # Row hover handler
+            def on_row_hover(e, d_icon=days_icon, i_icon=items_icon, container=None):
+                is_hovered = e.data == True or e.data == "true"
+                d_icon.opacity = 1 if is_hovered else 0
+                i_icon.opacity = 1 if is_hovered else 0
+                if container:
+                    container.bgcolor = ft.Colors.BLUE_50 if is_hovered else None
+                self.page.update()
+
+            profit_value = float(row['total_profit'] or 0)
+            row_content = ft.Row([
+                ft.Container(
+                    ft.Row([ft.Text(month_str), days_icon, items_icon], spacing=2, tight=True),
+                    width=150
+                ),
+                ft.Container(ft.Text(str(row['buy_orders'] or 0)), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(str(row['sell_orders'] or 0)), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{float(row['total_sales'] or 0):,.2f}"), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}"), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(
+                    f"{profit_value:,.2f}",
+                    color=ft.Colors.GREEN if profit_value > 0 else ft.Colors.RED
+                ), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+            ], spacing=10)
+
+            row_container = ft.Container(
+                content=row_content,
+                padding=10,
+                border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_300)),
+            )
+            # Set hover with reference to container
+            row_container.on_hover = lambda e, d=days_icon, i=items_icon, c=row_container: on_row_hover(e, d, i, c)
+
+            rows.append(row_container)
+
+        # Replace report container content
+        self.report_container.content = ft.Column(rows, spacing=0, scroll=ft.ScrollMode.AUTO)
         self.page.update()
 
     def _display_days_report(self, data):
         """Display profit by days report"""
-        self.report_table.columns = [
-            ft.DataColumn(ft.Text("Date", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Buy Orders", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Sell Orders", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Total Sales", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Taxes", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Net Profit", weight=ft.FontWeight.BOLD)),
-        ]
+        # Use custom table with Column/Row for proper row-wide hover
+        self.report_table.visible = False
 
-        self.report_table.rows = []
+        # Create header row
+        header_style = ft.TextStyle(weight=ft.FontWeight.BOLD)
+        header = ft.Container(
+            content=ft.Row([
+                ft.Container(ft.Text("Date", style=header_style), width=150),
+                ft.Container(ft.Text("Buy Orders", style=header_style), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Sell Orders", style=header_style), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Total Sales", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Taxes", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Net Profit", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+            ], spacing=10),
+            bgcolor=ft.Colors.GREY_200,
+            padding=10,
+            border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_400)),
+        )
+
+        # Create data rows
+        rows = [header]
         for row in data:
             day_str = row['day'].strftime("%Y-%m-%d") if hasattr(row['day'], 'strftime') else str(row['day'])
-            self.report_table.rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(day_str)),
-                        ft.DataCell(ft.Text(str(row['buy_orders'] or 0))),
-                        ft.DataCell(ft.Text(str(row['sell_orders'] or 0))),
-                        ft.DataCell(ft.Text(f"{float(row['total_sales'] or 0):,.2f}")),
-                        ft.DataCell(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}")),
-                        ft.DataCell(ft.Text(
-                            f"{float(row['total_profit'] or 0):,.2f}",
-                            color=ft.Colors.GREEN if float(row['total_profit'] or 0) > 0 else ft.Colors.RED
-                        )),
-                    ]
-                )
+
+            # Create icon for navigation (initially transparent)
+            items_icon = ft.IconButton(
+                icon=ft.Icons.LIST_ALT,
+                icon_size=16,
+                tooltip="Show Items for this day",
+                opacity=0,
+                on_click=lambda _, d=day_str: self.navigate_to_day_items(d),
+                style=ft.ButtonStyle(padding=0),
             )
 
+            # Row hover handler
+            def on_row_hover(e, i_icon=items_icon, container=None):
+                is_hovered = e.data == True or e.data == "true"
+                i_icon.opacity = 1 if is_hovered else 0
+                if container:
+                    container.bgcolor = ft.Colors.BLUE_50 if is_hovered else None
+                self.page.update()
+
+            profit_value = float(row['total_profit'] or 0)
+            row_content = ft.Row([
+                ft.Container(
+                    ft.Row([ft.Text(day_str), items_icon], spacing=2, tight=True),
+                    width=150
+                ),
+                ft.Container(ft.Text(str(row['buy_orders'] or 0)), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(str(row['sell_orders'] or 0)), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{float(row['total_sales'] or 0):,.2f}"), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}"), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(
+                    f"{profit_value:,.2f}",
+                    color=ft.Colors.GREEN if profit_value > 0 else ft.Colors.RED
+                ), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+            ], spacing=10)
+
+            row_container = ft.Container(
+                content=row_content,
+                padding=10,
+                border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_300)),
+            )
+            # Set hover with reference to container
+            row_container.on_hover = lambda e, i=items_icon, c=row_container: on_row_hover(e, i, c)
+
+            rows.append(row_container)
+
+        # Replace report container content
+        self.report_container.content = ft.Column(rows, spacing=0, scroll=ft.ScrollMode.AUTO)
         self.page.update()
 
     def _display_items_report(self, data):
         """Display profit by items report"""
-        self.report_table.columns = [
-            ft.DataColumn(ft.Text("Item Name", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Type ID", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Buy Orders", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Sell Orders", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Quantity Sold", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Total Sales", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Taxes", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Net Profit", weight=ft.FontWeight.BOLD)),
-        ]
+        # Use custom table style for consistency
+        self.report_table.visible = False
 
-        self.report_table.rows = []
+        # Create header row
+        header_style = ft.TextStyle(weight=ft.FontWeight.BOLD)
+        header = ft.Container(
+            content=ft.Row([
+                ft.Container(ft.Text("Item Name", style=header_style), width=300),
+                ft.Container(ft.Text("Type ID", style=header_style), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Buy", style=header_style), width=50, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Sell", style=header_style), width=50, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Qty Sold", style=header_style), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Total Sales", style=header_style), width=150, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Taxes", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text("Net Profit", style=header_style), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+            ], spacing=10),
+            bgcolor=ft.Colors.GREY_200,
+            padding=10,
+            border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_400)),
+        )
+
+        # Create data rows
+        rows = [header]
         for row in data:
-            self.report_table.rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(row['item_name'] or 'Unknown', max_lines=1)),
-                        ft.DataCell(ft.Text(str(row['type_id']))),
-                        ft.DataCell(ft.Text(str(row['buy_orders'] or 0))),
-                        ft.DataCell(ft.Text(str(row['sell_orders'] or 0))),
-                        ft.DataCell(ft.Text(f"{int(row['quantity_sold'] or 0):,}")),
-                        ft.DataCell(ft.Text(f"{float(row['total_sales'] or 0):,.2f}")),
-                        ft.DataCell(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}")),
-                        ft.DataCell(ft.Text(
-                            f"{float(row['total_profit'] or 0):,.2f}",
-                            color=ft.Colors.GREEN if float(row['total_profit'] or 0) > 0 else ft.Colors.RED
-                        )),
-                    ]
-                )
-            )
+            profit_value = float(row['total_profit'] or 0)
+            row_content = ft.Row([
+                ft.Container(ft.Text(row['item_name'] or 'Unknown', max_lines=1, overflow=ft.TextOverflow.ELLIPSIS), width=300),
+                ft.Container(ft.Text(str(row['type_id'])), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(str(row['buy_orders'] or 0)), width=50, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(str(row['sell_orders'] or 0)), width=50, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{int(row['quantity_sold'] or 0):,}"), width=80, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{float(row['total_sales'] or 0):,.2f}"), width=150, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(f"{float(row['total_taxes'] or 0):,.2f}"), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+                ft.Container(ft.Text(
+                    f"{profit_value:,.2f}",
+                    color=ft.Colors.GREEN if profit_value > 0 else ft.Colors.RED
+                ), width=120, alignment=ft.Alignment.CENTER_RIGHT),
+            ], spacing=10)
 
+            row_container = ft.Container(
+                content=row_content,
+                padding=10,
+                border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_300)),
+            )
+            rows.append(row_container)
+
+        # Replace report container content
+        self.report_container.content = ft.Column(rows, spacing=0, scroll=ft.ScrollMode.AUTO)
         self.page.update()
 
     def build(self):

@@ -1,4 +1,4 @@
-# EVE Online Market Helper
+# EVE Online Market Analyzer
 
 A comprehensive desktop application for EVE Online traders featuring market analysis, historical data viewing, and trade opportunity finding.
 
@@ -16,32 +16,11 @@ A comprehensive desktop application for EVE Online traders featuring market anal
 ## Prerequisites
 
 - Python 3.8 or higher
-- MySQL database (or Docker)
 - EVE Online client (for market logs monitoring)
 
 ## Installation and Setup
 
-### 1. Database Setup
-
-#### Option A: Using Docker (Recommended)
-
-If you have Docker installed, simply run:
-
-```bash
-docker-compose up -d
-```
-
-This will start a MySQL container with the required configuration.
-
-#### Option B: Using Existing MySQL
-
-Make sure you have access to a MySQL database server. You'll need:
-- Database name
-- Username
-- Password
-- Host address (usually `localhost`)
-
-### 2. Clone Repository and Create Virtual Environment
+### 1. Clone Repository and Create Virtual Environment
 
 **Windows (PowerShell):**
 ```powershell
@@ -67,13 +46,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure Application
+### 3. Configure Application
 
 Copy the example settings file and configure it:
 
@@ -85,27 +64,20 @@ cp settings.py.example settings.py
 copy settings.py.example settings.py
 ```
 
-Edit `settings.py` with your database credentials and EVE market logs path:
+Edit `settings.py` with your EVE market logs path:
 
 ```python
-DB_CONFIG = {
-    'host': 'localhost',
-    'database': 'evetrader',
-    'user': 'your_username',
-    'password': 'your_password'
-}
-
 MARKETLOGS_DIR = r'C:\Users\YourName\Documents\EVE\logs\Marketlogs'
 ```
 
-### 5. Run Application
+### 4. Run Application
 
 ```bash
 python main.py
 ```
 
 On first run, the application will:
-- Check database connection
+- Create SQLite database file at `data/evetrader.db` if it doesn't exist
 - Check if static data (regions and items) is present
 - If data is missing, offer to import it with a button
 - Show import progress in real-time
@@ -143,13 +115,12 @@ EVE Online frequently adds new items, regions, and makes balance changes. To upd
 ## Project Structure
 
 ```
-historical_prices/
+eve_market_analyzer/
 ├── main.py                         # Main entry point
 ├── settings.py.example            # Example configuration file
 ├── settings.py                    # Your configuration (not in git)
 ├── requirements.txt               # Python dependencies
-├── docker-compose.yml             # Docker MySQL setup (optional)
-├── data/                          # Downloaded CSV files (auto-created)
+├── data/                          # SQLite database and CSV files (auto-created)
 └── src/                           # Source code package
     ├── app.py                     # Main application class
     ├── handlers/                  # Event handlers
@@ -166,16 +137,14 @@ historical_prices/
 
 ## Troubleshooting
 
-### Database Connection Errors
+### Database Errors
 
-- Verify your MySQL server is running
-- Check credentials in `settings.py`
-- Ensure the database exists (create it if needed)
+- The SQLite database is stored at `data/evetrader.db` and is created automatically on first run
+- If the database is corrupted, delete `data/evetrader.db` and restart the application
 
 ### No Items/Regions in Dropdown
 
-- Run `python import_static_data.py` to populate the database
-- Check database connection settings
+- Use "Update Static Data" from the main menu to populate the database
 - Verify tables were created successfully
 
 ### Market Log Monitoring Not Working
@@ -189,7 +158,6 @@ historical_prices/
 See `requirements.txt` for full list. Main dependencies:
 - `flet>=0.80.0` - UI framework
 - `requests` - API calls
-- `mysql-connector-python` - Database connectivity
 - `watchdog` - File system monitoring
 - `pandas` - Data processing
 

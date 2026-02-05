@@ -35,24 +35,26 @@ class WelcomeScreen:
                             text_align=ft.TextAlign.CENTER
                         ),
                         ft.Container(height=15),
-                        ft.Column([
-                            ft.Row([
-                                ft.Icon(ft.Icons.HISTORY, color=ft.Colors.BLUE),
-                                ft.Text("View historical market data for any item and region", size=13)
-                            ], spacing=10),
-                            ft.Row([
-                                ft.Icon(ft.Icons.TRENDING_UP, color=ft.Colors.GREEN),
-                                ft.Text("Find profitable trade opportunities", size=13)
-                            ], spacing=10),
-                            ft.Row([
-                                ft.Icon(ft.Icons.AUTO_MODE, color=ft.Colors.ORANGE),
-                                ft.Text("Automatic market log monitoring", size=13)
-                            ], spacing=10),
-                            ft.Row([
-                                ft.Icon(ft.Icons.SETTINGS, color=ft.Colors.GREY),
-                                ft.Text("Customize settings for your trading style", size=13)
-                            ], spacing=10),
-                        ], spacing=12),
+                        ft.Row([
+                            ft.Column([
+                                ft.Row([
+                                    ft.Icon(ft.Icons.HISTORY, color=ft.Colors.BLUE),
+                                    ft.Text("View historical market data for any item and region", size=13)
+                                ], spacing=10),
+                                ft.Row([
+                                    ft.Icon(ft.Icons.TRENDING_UP, color=ft.Colors.GREEN),
+                                    ft.Text("Find profitable trade opportunities", size=13)
+                                ], spacing=10),
+                                ft.Row([
+                                    ft.Icon(ft.Icons.AUTO_MODE, color=ft.Colors.ORANGE),
+                                    ft.Text("Automatic market log monitoring", size=13)
+                                ], spacing=10),
+                                ft.Row([
+                                    ft.Icon(ft.Icons.SETTINGS, color=ft.Colors.GREY),
+                                    ft.Text("Customize settings for your trading style", size=13)
+                                ], spacing=10),
+                            ], spacing=12),
+                        ], alignment=ft.MainAxisAlignment.CENTER),
                         ft.Container(height=25),
                         ft.Text(
                             "Database is ready with static data loaded.",

@@ -187,6 +187,8 @@ class CourierPathFinderScreen:
                 access_token = self.character.get('access_token')
                 refresh_token = self.character.get('refresh_token')
                 token_expiry = self.character.get('token_expiry')
+                if token_expiry and isinstance(token_expiry, str):
+                    token_expiry = datetime.fromisoformat(token_expiry)
 
                 # Check if token needs refresh
                 if not access_token or not token_expiry or datetime.now() >= token_expiry:
@@ -548,6 +550,8 @@ class CourierPathFinderScreen:
                 if self.character:
                     access_token = self.character.get('access_token')
                     token_expiry = self.character.get('token_expiry')
+                    if token_expiry and isinstance(token_expiry, str):
+                        token_expiry = datetime.fromisoformat(token_expiry)
 
                     # Check if token is expired
                     if token_expiry and datetime.now() >= token_expiry:

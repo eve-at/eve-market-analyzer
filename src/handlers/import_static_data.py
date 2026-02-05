@@ -1,6 +1,6 @@
 """Static data import handler"""
-import mysql.connector
-from mysql.connector import Error
+import sqlite3
+import os
 import requests
 from pathlib import Path
 import importlib
@@ -59,7 +59,7 @@ def download_csv(url, filename, callback=None):
 
 def import_static_data(callback=None):
     """
-    Download and import static data (regions and types) into MySQL database
+    Download and import static data (regions and types) into SQLite database
 
     Parameters:
     callback - optional callback function to receive progress messages
@@ -97,363 +97,355 @@ def import_static_data(callback=None):
     log("")
 
     # Connect to database and import data
-    connection = None
+    conn = None
     try:
-        # Connect to MySQL
-        log("Connecting to MySQL database...")
-        connection = mysql.connector.connect(**settings.DB_CONFIG)
+        # Connect to SQLite
+        db_path = settings.DB_PATH
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        log("Connecting to SQLite database...")
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        log("Successfully connected to SQLite")
+        log("")
 
-        if connection.is_connected():
-            cursor = connection.cursor()
-            log("Successfully connected to MySQL")
-            log("")
+        # Read CSV files
+        log("Reading CSV files...")
+        # Import pandas only when needed
+        import pandas as pd
+        regions_df = pd.read_csv(regions_file)
+        types_df = pd.read_csv(types_file)
+        market_groups_df = pd.read_csv(market_groups_file)
+        stations_df = pd.read_csv(stations_file)
+        solar_systems_df = pd.read_csv(solar_systems_file)
+        solar_system_jumps_df = pd.read_csv(solar_system_jumps_file)
+        log(f"Loaded {len(regions_df)} regions")
+        log(f"Loaded {len(types_df)} item types")
+        log(f"Loaded {len(market_groups_df)} market groups")
+        log(f"Loaded {len(stations_df)} stations")
+        log(f"Loaded {len(solar_systems_df)} solar systems")
+        log(f"Loaded {len(solar_system_jumps_df)} solar system jumps")
+        log("")
 
-            # Read CSV files
-            log("Reading CSV files...")
-            # Import pandas only when needed
-            import pandas as pd
-            regions_df = pd.read_csv(regions_file)
-            types_df = pd.read_csv(types_file)
-            market_groups_df = pd.read_csv(market_groups_file)
-            stations_df = pd.read_csv(stations_file)
-            solar_systems_df = pd.read_csv(solar_systems_file)
-            solar_system_jumps_df = pd.read_csv(solar_system_jumps_file)
-            log(f"Loaded {len(regions_df)} regions")
-            log(f"Loaded {len(types_df)} item types")
-            log(f"Loaded {len(market_groups_df)} market groups")
-            log(f"Loaded {len(stations_df)} stations")
-            log(f"Loaded {len(solar_systems_df)} solar systems")
-            log(f"Loaded {len(solar_system_jumps_df)} solar system jumps")
-            log("")
+        # Create regions table
+        log("Creating regions table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS regions (
+                regionID INTEGER PRIMARY KEY,
+                regionName TEXT,
+                x REAL,
+                y REAL,
+                z REAL,
+                xMin REAL,
+                xMax REAL,
+                yMin REAL,
+                yMax REAL,
+                zMin REAL,
+                zMax REAL,
+                factionID INTEGER,
+                nebula INTEGER,
+                radius TEXT
+            )
+        """)
+        log("Table 'regions' created or already exists")
 
-            # Create regions table
-            log("Creating regions table...")
+        # Create types table
+        log("Creating types table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS types (
+                typeID INTEGER PRIMARY KEY,
+                groupID INTEGER,
+                typeName TEXT,
+                description TEXT,
+                mass REAL,
+                volume REAL,
+                capacity REAL,
+                portionSize INTEGER,
+                raceID INTEGER,
+                basePrice REAL,
+                published INTEGER,
+                marketGroupID INTEGER,
+                iconID INTEGER,
+                soundID INTEGER,
+                graphicID INTEGER
+            )
+        """)
+        log("Table 'types' created or already exists")
+        log("")
+
+        # Create market groups table
+        log("Creating market_groups table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS market_groups (
+                marketGroupID INTEGER PRIMARY KEY,
+                parentGroupID INTEGER,
+                topGroupID INTEGER,
+                marketGroupName TEXT,
+                description TEXT,
+                iconID INTEGER,
+                hasTypes INTEGER
+            )
+        """)
+        log("Table 'market_groups' created or already exists")
+        log("")
+
+        # Create stations table
+        log("Creating stations table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stations (
+                stationID INTEGER PRIMARY KEY,
+                security REAL,
+                dockingCostPerVolume REAL,
+                maxShipVolumeDockable REAL,
+                officeRentalCost INTEGER,
+                operationID INTEGER,
+                stationTypeID INTEGER,
+                corporationID INTEGER,
+                solarSystemID INTEGER,
+                constellationID INTEGER,
+                regionID INTEGER,
+                stationName TEXT,
+                x REAL,
+                y REAL,
+                z REAL,
+                reprocessingEfficiency REAL,
+                reprocessingStationsTake REAL,
+                reprocessingHangarFlag INTEGER
+            )
+        """)
+        log("Table 'stations' created or already exists")
+        log("")
+
+        # Create solar_systems table
+        log("Creating solar_systems table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS solar_systems (
+                solarSystemID INTEGER PRIMARY KEY,
+                regionID INTEGER,
+                constellationID INTEGER,
+                solarSystemName TEXT,
+                x REAL,
+                y REAL,
+                z REAL,
+                xMin REAL,
+                xMax REAL,
+                yMin REAL,
+                yMax REAL,
+                zMin REAL,
+                zMax REAL,
+                luminosity REAL,
+                border INTEGER,
+                fringe INTEGER,
+                corridor INTEGER,
+                hub INTEGER,
+                international INTEGER,
+                regional INTEGER,
+                constellation INTEGER,
+                security REAL,
+                factionID INTEGER,
+                radius REAL,
+                sunTypeID INTEGER,
+                securityClass TEXT
+            )
+        """)
+        log("Table 'solar_systems' created or already exists")
+        log("")
+
+        # Create solar_system_jumps table
+        log("Creating solar_system_jumps table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS solar_system_jumps (
+                fromRegionID INTEGER,
+                fromConstellationID INTEGER,
+                fromSolarSystemID INTEGER,
+                toSolarSystemID INTEGER,
+                toConstellationID INTEGER,
+                toRegionID INTEGER,
+                PRIMARY KEY (fromSolarSystemID, toSolarSystemID)
+            )
+        """)
+        log("Table 'solar_system_jumps' created or already exists")
+        log("")
+
+        # Clear existing data
+        log("Clearing existing data...")
+        cursor.execute("DELETE FROM regions")
+        cursor.execute("DELETE FROM types")
+        cursor.execute("DELETE FROM market_groups")
+        cursor.execute("DELETE FROM stations")
+        cursor.execute("DELETE FROM solar_systems")
+        cursor.execute("DELETE FROM solar_system_jumps")
+        log("Tables cleared")
+        log("")
+
+        # Import regions
+        log("Importing regions data...")
+        region_count = 0
+        for index, row in regions_df.iterrows():
+            values = tuple(None if pd.isna(val) else val for val in row)
+            placeholders = ', '.join(['?'] * len(row))
+            columns = ', '.join(row.index)
+            sql = f"INSERT INTO regions ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, values)
+            region_count += 1
+
+            if region_count % 10 == 0:
+                log(f"  Imported {region_count}/{len(regions_df)} regions...")
+
+        log(f"Successfully imported {region_count} regions")
+        log("")
+
+        # Import types
+        log("Importing types data...")
+        type_count = 0
+        for index, row in types_df.iterrows():
+            values = tuple(None if pd.isna(val) else val for val in row)
+            placeholders = ', '.join(['?'] * len(row))
+            columns = ', '.join(row.index)
+            sql = f"INSERT INTO types ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, values)
+            type_count += 1
+
+            if type_count % 1000 == 0:
+                log(f"  Imported {type_count}/{len(types_df)} types...")
+
+        log(f"Successfully imported {type_count} item types")
+        log("")
+
+        # Import market groups
+        log("Importing market_groups data...")
+        mg_count = 0
+        for index, row in market_groups_df.iterrows():
+            values = tuple(None if pd.isna(val) else val for val in row)
+            placeholders = ', '.join(['?'] * len(row))
+            columns = ', '.join(row.index)
+            sql = f"INSERT INTO market_groups ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, values)
+            mg_count += 1
+
+            if mg_count % 1000 == 0:
+                log(f"  Imported {mg_count}/{len(market_groups_df)} market groups...")
+
+        log(f"Successfully imported {mg_count} market groups")
+        log("")
+
+        # Import stations
+        log("Importing stations data...")
+        station_count = 0
+        for index, row in stations_df.iterrows():
+            values = tuple(None if pd.isna(val) else val for val in row)
+            placeholders = ', '.join(['?'] * len(row))
+            columns = ', '.join(row.index)
+            sql = f"INSERT INTO stations ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, values)
+            station_count += 1
+
+            if station_count % 500 == 0:
+                log(f"  Imported {station_count}/{len(stations_df)} stations...")
+
+        log(f"Successfully imported {station_count} stations")
+        log("")
+
+        # Import solar systems
+        log("Importing solar_systems data...")
+        solar_system_count = 0
+        for index, row in solar_systems_df.iterrows():
+            values = tuple(None if pd.isna(val) else val for val in row)
+            placeholders = ', '.join(['?'] * len(row))
+            columns = ', '.join(row.index)
+            sql = f"INSERT INTO solar_systems ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, values)
+            solar_system_count += 1
+
+            if solar_system_count % 500 == 0:
+                log(f"  Imported {solar_system_count}/{len(solar_systems_df)} solar systems...")
+
+        log(f"Successfully imported {solar_system_count} solar systems")
+        log("")
+
+        # Import solar system jumps
+        log("Importing solar_system_jumps data...")
+        jump_count = 0
+        for index, row in solar_system_jumps_df.iterrows():
+            values = tuple(None if pd.isna(val) else val for val in row)
+            placeholders = ', '.join(['?'] * len(row))
+            columns = ', '.join(row.index)
+            sql = f"INSERT INTO solar_system_jumps ({columns}) VALUES ({placeholders})"
+            cursor.execute(sql, values)
+            jump_count += 1
+
+            if jump_count % 1000 == 0:
+                log(f"  Imported {jump_count}/{len(solar_system_jumps_df)} jumps...")
+
+        log(f"Successfully imported {jump_count} solar system jumps")
+        log("")
+
+        # Commit transaction
+        conn.commit()
+        log("All changes committed to database")
+        log("")
+
+        # Fill topGroupID - find the root group for each market group
+        log("Calculating topGroupID for market groups...")
+
+        # Get all groups with their parent relationships
+        cursor.execute("""
+            SELECT marketGroupID, parentGroupID
+            FROM market_groups
+        """)
+        all_groups = {row[0]: row[1] for row in cursor.fetchall()}
+
+        # Function to find top group for a given group
+        def find_top_group(group_id, visited=None):
+            if visited is None:
+                visited = set()
+
+            # Prevent infinite loops
+            if group_id in visited:
+                return group_id
+            visited.add(group_id)
+
+            parent_id = all_groups.get(group_id)
+
+            # If no parent, this is the top group
+            if parent_id is None:
+                return group_id
+
+            # Recursively find the top group
+            return find_top_group(parent_id, visited)
+
+        # Update topGroupID for each group
+        update_count = 0
+        for group_id in all_groups.keys():
+            top_group_id = find_top_group(group_id)
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS regions (
-                    regionID BIGINT PRIMARY KEY,
-                    regionName VARCHAR(255),
-                    x DOUBLE,
-                    y DOUBLE,
-                    z DOUBLE,
-                    xMin DOUBLE,
-                    xMax DOUBLE,
-                    yMin DOUBLE,
-                    yMax DOUBLE,
-                    zMin DOUBLE,
-                    zMax DOUBLE,
-                    factionID INT,
-                    nebula INT,
-                    radius VARCHAR(50)
-                )
-            """)
-            log("Table 'regions' created or already exists")
+                UPDATE market_groups
+                SET topGroupID = ?
+                WHERE marketGroupID = ?
+            """, (top_group_id, group_id))
+            update_count += 1
 
-            # Create types table
-            log("Creating types table...")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS types (
-                    typeID INT PRIMARY KEY,
-                    groupID INT,
-                    typeName VARCHAR(255),
-                    description TEXT,
-                    mass DOUBLE,
-                    volume DOUBLE,
-                    capacity DOUBLE,
-                    portionSize INT,
-                    raceID INT,
-                    basePrice DOUBLE,
-                    published TINYINT,
-                    marketGroupID INT,
-                    iconID INT,
-                    soundID INT,
-                    graphicID INT
-                )
-            """)
-            log("Table 'types' created or already exists")
-            log("")
+            if update_count % 100 == 0:
+                log(f"  Updated topGroupID for {update_count}/{len(all_groups)} groups...")
 
+        conn.commit()
+        log(f"Successfully updated topGroupID for {update_count} market groups")
+        log("")
 
-            # Create market groups table
-            log("Creating market_groups table...")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS market_groups (
-                    marketGroupID INT PRIMARY KEY,
-                    parentGroupID INT,
-                    topGroupID INT,
-                    marketGroupName VARCHAR(255),
-                    description TEXT,
-                    iconID INT,
-                    hasTypes TINYINT(1)
-                )
-            """)
-            log("Table 'market_groups' created or already exists")
-            log("")
-
-            # Create stations table
-            log("Creating stations table...")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS stations (
-                    stationID BIGINT PRIMARY KEY,
-                    security DOUBLE,
-                    dockingCostPerVolume DOUBLE,
-                    maxShipVolumeDockable DOUBLE,
-                    officeRentalCost BIGINT,
-                    operationID INT,
-                    stationTypeID INT,
-                    corporationID BIGINT,
-                    solarSystemID BIGINT,
-                    constellationID BIGINT,
-                    regionID BIGINT,
-                    stationName VARCHAR(255),
-                    x DOUBLE,
-                    y DOUBLE,
-                    z DOUBLE,
-                    reprocessingEfficiency DOUBLE,
-                    reprocessingStationsTake DOUBLE,
-                    reprocessingHangarFlag INT
-                )
-            """)
-            log("Table 'stations' created or already exists")
-            log("")
-
-            # Create solar_systems table
-            log("Creating solar_systems table...")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS solar_systems (
-                    solarSystemID BIGINT PRIMARY KEY,
-                    regionID BIGINT,
-                    constellationID BIGINT,
-                    solarSystemName VARCHAR(255),
-                    x DOUBLE,
-                    y DOUBLE,
-                    z DOUBLE,
-                    xMin DOUBLE,
-                    xMax DOUBLE,
-                    yMin DOUBLE,
-                    yMax DOUBLE,
-                    zMin DOUBLE,
-                    zMax DOUBLE,
-                    luminosity DOUBLE,
-                    border TINYINT(1),
-                    fringe TINYINT(1),
-                    corridor TINYINT(1),
-                    hub TINYINT(1),
-                    international TINYINT(1),
-                    regional TINYINT(1),
-                    constellation TINYINT(1),
-                    security DOUBLE,
-                    factionID INT,
-                    radius DOUBLE,
-                    sunTypeID INT,
-                    securityClass VARCHAR(10)
-                )
-            """)
-            log("Table 'solar_systems' created or already exists")
-            log("")
-
-            # Create solar_system_jumps table
-            log("Creating solar_system_jumps table...")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS solar_system_jumps (
-                    fromRegionID BIGINT,
-                    fromConstellationID BIGINT,
-                    fromSolarSystemID BIGINT,
-                    toSolarSystemID BIGINT,
-                    toConstellationID BIGINT,
-                    toRegionID BIGINT,
-                    PRIMARY KEY (fromSolarSystemID, toSolarSystemID)
-                )
-            """)
-            log("Table 'solar_system_jumps' created or already exists")
-            log("")
-
-            # Clear existing data
-            log("Clearing existing data...")
-            cursor.execute("TRUNCATE TABLE regions")
-            cursor.execute("TRUNCATE TABLE types")
-            cursor.execute("TRUNCATE TABLE market_groups")
-            cursor.execute("TRUNCATE TABLE stations")
-            cursor.execute("TRUNCATE TABLE solar_systems")
-            cursor.execute("TRUNCATE TABLE solar_system_jumps")
-            log("Tables cleared")
-            log("")
-
-            # Import regions
-            log("Importing regions data...")
-            region_count = 0
-            for index, row in regions_df.iterrows():
-                values = tuple(None if pd.isna(val) else val for val in row)
-                placeholders = ', '.join(['%s'] * len(row))
-                columns = ', '.join(row.index)
-                sql = f"INSERT INTO regions ({columns}) VALUES ({placeholders})"
-                cursor.execute(sql, values)
-                region_count += 1
-
-                if region_count % 10 == 0:
-                    log(f"  Imported {region_count}/{len(regions_df)} regions...")
-
-            log(f"Successfully imported {region_count} regions")
-            log("")
-
-            # Import types
-            log("Importing types data...")
-            type_count = 0
-            for index, row in types_df.iterrows():
-                values = tuple(None if pd.isna(val) else val for val in row)
-                placeholders = ', '.join(['%s'] * len(row))
-                columns = ', '.join(row.index)
-                sql = f"INSERT INTO types ({columns}) VALUES ({placeholders})"
-                cursor.execute(sql, values)
-                type_count += 1
-
-                if type_count % 1000 == 0:
-                    log(f"  Imported {type_count}/{len(types_df)} types...")
-
-            log(f"Successfully imported {type_count} item types")
-            log("")
-
-            # Import types
-            log("Importing market_groups data...")
-            type_count = 0
-            for index, row in market_groups_df.iterrows():
-                values = tuple(None if pd.isna(val) else val for val in row)
-                placeholders = ', '.join(['%s'] * len(row))
-                columns = ', '.join(row.index)
-                sql = f"INSERT INTO market_groups ({columns}) VALUES ({placeholders})"
-                cursor.execute(sql, values)
-                type_count += 1
-
-                if type_count % 1000 == 0:
-                    log(f"  Imported {type_count}/{len(types_df)} market groups...")
-
-            log(f"Successfully imported {type_count} market groups")
-            log("")
-
-            # Import stations
-            log("Importing stations data...")
-            station_count = 0
-            for index, row in stations_df.iterrows():
-                values = tuple(None if pd.isna(val) else val for val in row)
-                placeholders = ', '.join(['%s'] * len(row))
-                columns = ', '.join(row.index)
-                sql = f"INSERT INTO stations ({columns}) VALUES ({placeholders})"
-                cursor.execute(sql, values)
-                station_count += 1
-
-                if station_count % 500 == 0:
-                    log(f"  Imported {station_count}/{len(stations_df)} stations...")
-
-            log(f"Successfully imported {station_count} stations")
-            log("")
-
-            # Import solar systems
-            log("Importing solar_systems data...")
-            solar_system_count = 0
-            for index, row in solar_systems_df.iterrows():
-                values = tuple(None if pd.isna(val) else val for val in row)
-                placeholders = ', '.join(['%s'] * len(row))
-                columns = ', '.join(row.index)
-                sql = f"INSERT INTO solar_systems ({columns}) VALUES ({placeholders})"
-                cursor.execute(sql, values)
-                solar_system_count += 1
-
-                if solar_system_count % 500 == 0:
-                    log(f"  Imported {solar_system_count}/{len(solar_systems_df)} solar systems...")
-
-            log(f"Successfully imported {solar_system_count} solar systems")
-            log("")
-
-            # Import solar system jumps
-            log("Importing solar_system_jumps data...")
-            jump_count = 0
-            for index, row in solar_system_jumps_df.iterrows():
-                values = tuple(None if pd.isna(val) else val for val in row)
-                placeholders = ', '.join(['%s'] * len(row))
-                columns = ', '.join(row.index)
-                sql = f"INSERT INTO solar_system_jumps ({columns}) VALUES ({placeholders})"
-                cursor.execute(sql, values)
-                jump_count += 1
-
-                if jump_count % 1000 == 0:
-                    log(f"  Imported {jump_count}/{len(solar_system_jumps_df)} jumps...")
-
-            log(f"Successfully imported {jump_count} solar system jumps")
-            log("")
-
-            # Commit transaction
-            connection.commit()
-            log("All changes committed to database")
-            log("")
-
-            # Fill topGroupID - find the root group for each market group
-            log("Calculating topGroupID for market groups...")
-
-            # Get all groups with their parent relationships
-            cursor.execute("""
-                SELECT marketGroupID, parentGroupID
-                FROM market_groups
-            """)
-            all_groups = {row[0]: row[1] for row in cursor.fetchall()}
-
-            # Function to find top group for a given group
-            def find_top_group(group_id, visited=None):
-                if visited is None:
-                    visited = set()
-
-                # Prevent infinite loops
-                if group_id in visited:
-                    return group_id
-                visited.add(group_id)
-
-                parent_id = all_groups.get(group_id)
-
-                # If no parent, this is the top group
-                if parent_id is None:
-                    return group_id
-
-                # Recursively find the top group
-                return find_top_group(parent_id, visited)
-
-            # Update topGroupID for each group
-            update_count = 0
-            for group_id in all_groups.keys():
-                top_group_id = find_top_group(group_id)
-                cursor.execute("""
-                    UPDATE market_groups
-                    SET topGroupID = %s
-                    WHERE marketGroupID = %s
-                """, (top_group_id, group_id))
-                update_count += 1
-
-                if update_count % 100 == 0:
-                    log(f"  Updated topGroupID for {update_count}/{len(all_groups)} groups...")
-
-            connection.commit()
-            log(f"Successfully updated topGroupID for {update_count} market groups")
-            log("")
-
-            log("="*60)
-            log("Import completed successfully!")
-            log("="*60)
-            return True
-
-    except Error as e:
-        log(f"\n✗ MySQL error: {e}")
-        if connection:
-            connection.rollback()
-        return False
+        log("="*60)
+        log("Import completed successfully!")
+        log("="*60)
+        return True
 
     except Exception as e:
-        log(f"\n✗ Error: {e}")
-        if connection:
-            connection.rollback()
+        log(f"\nError: {e}")
+        if conn:
+            conn.rollback()
         return False
 
     finally:
-        if connection and connection.is_connected():
-            cursor.close()
-            connection.close()
-            log("\nMySQL connection closed")
+        if conn:
+            conn.close()
+            log("\nDatabase connection closed")
 
 
 if __name__ == "__main__":

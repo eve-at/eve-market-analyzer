@@ -1,6 +1,6 @@
 """Trade opportunities handler for fetching and managing market orders"""
-import mysql.connector
-from mysql.connector import Error
+import sqlite3
+import os
 import requests
 import time
 import importlib
@@ -12,6 +12,15 @@ def _get_settings():
     import settings
     importlib.reload(settings)
     return settings
+
+
+def _get_connection(settings):
+    """Get a SQLite connection"""
+    db_path = settings.DB_PATH
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def check_orders_count(region_id, callback=None):
@@ -26,20 +35,20 @@ def check_orders_count(region_id, callback=None):
     int - number of orders in table, or -1 if table doesn't exist
     """
     settings = _get_settings()
-    connection = None
+    conn = None
 
     try:
-        connection = mysql.connector.connect(**settings.DB_CONFIG)
-        cursor = connection.cursor()
+        conn = _get_connection(settings)
+        cursor = conn.cursor()
 
         table_name = f"orders_{region_id}"
 
-        # Check if table exists
+        # Check if table exists in SQLite
         cursor.execute("""
             SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = %s AND table_name = %s
-        """, (settings.DB_CONFIG['database'], table_name))
+            FROM sqlite_master
+            WHERE type='table' AND name=?
+        """, (table_name,))
 
         table_exists = cursor.fetchone()[0] > 0
 
@@ -47,19 +56,18 @@ def check_orders_count(region_id, callback=None):
             return -1
 
         # Get count
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+        cursor.execute(f"SELECT COUNT(*) FROM [{table_name}]")
         count = cursor.fetchone()[0]
 
         return count
 
-    except Error as e:
+    except Exception as e:
         if callback:
             callback(f"Database error: {e}")
         return -1
     finally:
-        if connection and connection.is_connected():
-            cursor.close()
-            connection.close()
+        if conn:
+            conn.close()
 
 
 def update_orders(region_id, callback=None):
@@ -81,7 +89,7 @@ def update_orders(region_id, callback=None):
             callback(message)
 
     settings = _get_settings()
-    connection = None
+    conn = None
 
     try:
         log("="*60)
@@ -90,10 +98,10 @@ def update_orders(region_id, callback=None):
         log("")
 
         # Connect to database
-        log("Connecting to MySQL database...")
-        connection = mysql.connector.connect(**settings.DB_CONFIG)
-        cursor = connection.cursor()
-        log("Successfully connected to MySQL")
+        log("Connecting to SQLite database...")
+        conn = _get_connection(settings)
+        cursor = conn.cursor()
+        log("Successfully connected to SQLite")
         log("")
 
         table_name = f"orders_{region_id}"
@@ -101,27 +109,27 @@ def update_orders(region_id, callback=None):
         # Create table if doesn't exist
         log(f"Creating table {table_name} if not exists...")
         cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                order_id BIGINT PRIMARY KEY,
-                duration INT,
-                is_buy_order BOOLEAN,
-                issued DATETIME,
-                location_id BIGINT,
-                min_volume INT,
-                price DECIMAL(20, 2),
-                `range` VARCHAR(50),
-                system_id INT,
-                type_id INT,
-                volume_remain INT,
-                volume_total INT
+            CREATE TABLE IF NOT EXISTS [{table_name}] (
+                order_id INTEGER PRIMARY KEY,
+                duration INTEGER,
+                is_buy_order INTEGER,
+                issued TEXT,
+                location_id INTEGER,
+                min_volume INTEGER,
+                price REAL,
+                range_type TEXT,
+                system_id INTEGER,
+                type_id INTEGER,
+                volume_remain INTEGER,
+                volume_total INTEGER
             )
         """)
         log(f"Table {table_name} ready")
         log("")
 
-        # Truncate table
+        # Clear table
         log(f"Clearing existing data from {table_name}...")
-        cursor.execute(f"TRUNCATE TABLE {table_name}")
+        cursor.execute(f"DELETE FROM [{table_name}]")
         log("Table cleared")
         log("")
 
@@ -155,32 +163,21 @@ def update_orders(region_id, callback=None):
                 # Insert orders into database
                 log(f"  Inserting {len(orders)} orders from page {page}...")
                 for order in orders:
-                    # Convert ISO 8601 datetime format to MySQL datetime format
+                    # Convert ISO 8601 datetime format
                     issued_dt = datetime.fromisoformat(order['issued'].replace('Z', '+00:00'))
+                    issued_str = issued_dt.strftime("%Y-%m-%d %H:%M:%S")
 
                     cursor.execute(f"""
-                        INSERT INTO {table_name}
+                        INSERT OR REPLACE INTO [{table_name}]
                         (order_id, duration, is_buy_order, issued, location_id,
-                         min_volume, price, `range`, system_id, type_id,
+                         min_volume, price, range_type, system_id, type_id,
                          volume_remain, volume_total)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE
-                            duration = VALUES(duration),
-                            is_buy_order = VALUES(is_buy_order),
-                            issued = VALUES(issued),
-                            location_id = VALUES(location_id),
-                            min_volume = VALUES(min_volume),
-                            price = VALUES(price),
-                            `range` = VALUES(`range`),
-                            system_id = VALUES(system_id),
-                            type_id = VALUES(type_id),
-                            volume_remain = VALUES(volume_remain),
-                            volume_total = VALUES(volume_total)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         order['order_id'],
                         order['duration'],
-                        order['is_buy_order'],
-                        issued_dt,
+                        1 if order['is_buy_order'] else 0,
+                        issued_str,
                         order['location_id'],
                         order['min_volume'],
                         order['price'],
@@ -195,7 +192,7 @@ def update_orders(region_id, callback=None):
                 log(f"  Total orders fetched: {total_orders}")
 
                 # Commit after each page
-                connection.commit()
+                conn.commit()
 
                 page += 1
 
@@ -212,21 +209,15 @@ def update_orders(region_id, callback=None):
         log("="*60)
         return True
 
-    except Error as e:
-        log(f"Database error: {e}")
-        if connection:
-            connection.rollback()
-        return False
     except Exception as e:
-        log(f"Error: {e}")
-        if connection:
-            connection.rollback()
+        log(f"Database error: {e}")
+        if conn:
+            conn.rollback()
         return False
     finally:
-        if connection and connection.is_connected():
-            cursor.close()
-            connection.close()
-            log("MySQL connection closed")
+        if conn:
+            conn.close()
+            log("Database connection closed")
 
 
 def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_percent,
@@ -234,20 +225,6 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                       selected_market_groups=None, callback=None):
     """
     Find trade opportunities based on filters and save to database
-
-    Parameters:
-    region_id - EVE Online region ID
-    min_sell_price - Minimum sell price filter
-    max_buy_price - Maximum buy price filter
-    min_profit_percent - Minimum profit percentage
-    max_profit_percent - Maximum profit percentage
-    min_daily_quantity - Minimum daily quantity
-    max_competitors - Maximum number of competitors (optional)
-    selected_market_groups - Optional list of market group IDs to filter by
-    callback - optional callback function for progress messages
-
-    Returns:
-    list - List of opportunities as dictionaries, or None if failed
     """
 
     def log(message):
@@ -257,7 +234,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
             callback(message)
 
     settings = _get_settings()
-    connection = None
+    conn = None
 
     try:
         log("="*60)
@@ -266,10 +243,10 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         log("")
 
         # Connect to database
-        log("Connecting to MySQL database...")
-        connection = mysql.connector.connect(**settings.DB_CONFIG)
-        cursor = connection.cursor(dictionary=True)
-        log("Successfully connected to MySQL")
+        log("Connecting to SQLite database...")
+        conn = _get_connection(settings)
+        cursor = conn.cursor()
+        log("Successfully connected to SQLite")
         log("")
 
         orders_table = f"orders_{region_id}"
@@ -279,11 +256,11 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         # Check if orders table exists
         cursor.execute("""
             SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = %s AND table_name = %s
-        """, (settings.DB_CONFIG['database'], orders_table))
+            FROM sqlite_master
+            WHERE type='table' AND name=?
+        """, (orders_table,))
 
-        if cursor.fetchone()['COUNT(*)'] == 0:
+        if cursor.fetchone()[0] == 0:
             log(f"Error: Orders table {orders_table} doesn't exist")
             log("Please click 'Update Orders' first")
             return None
@@ -291,20 +268,19 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         # Create history table if not exists
         log(f"Creating table {history_table} if not exists...")
         cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {history_table} (
-                type_id INT NOT NULL,
-                order_count INT DEFAULT NULL,
-                volume INT DEFAULT NULL,
-                created_at DATETIME NOT NULL,
-                PRIMARY KEY (type_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+            CREATE TABLE IF NOT EXISTS [{history_table}] (
+                type_id INTEGER PRIMARY KEY,
+                order_count INTEGER DEFAULT NULL,
+                volume INTEGER DEFAULT NULL,
+                created_at TEXT NOT NULL
+            )
         """)
         log(f"Table {history_table} ready")
         log("")
 
         # Check if orders table has data
-        cursor.execute(f"SELECT COUNT(*) as cnt FROM {orders_table}")
-        orders_count = cursor.fetchone()['cnt']
+        cursor.execute(f"SELECT COUNT(*) as cnt FROM [{orders_table}]")
+        orders_count = cursor.fetchone()[0]
 
         if orders_count == 0:
             log(f"Error: Orders table {orders_table} is empty")
@@ -317,18 +293,18 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         # Create opportunities table if not exists
         log(f"Creating table {opportunities_table} if not exists...")
         cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS {opportunities_table} (
-                type_id INT PRIMARY KEY,
-                typeName VARCHAR(255),
-                buy_orders_count INT,
-                sell_orders_count INT,
-                min_sell_price DECIMAL(20, 2),
-                max_buy_price DECIMAL(20, 2),
-                profit INT,
-                competitors INT,
-                qty_avg INT,
-                daily_orders INT DEFAULT NULL,
-                daily_volume INT DEFAULT NULL
+            CREATE TABLE IF NOT EXISTS [{opportunities_table}] (
+                type_id INTEGER PRIMARY KEY,
+                typeName TEXT,
+                buy_orders_count INTEGER,
+                sell_orders_count INTEGER,
+                min_sell_price REAL,
+                max_buy_price REAL,
+                profit INTEGER,
+                competitors INTEGER,
+                qty_avg INTEGER,
+                daily_orders INTEGER DEFAULT NULL,
+                daily_volume INTEGER DEFAULT NULL
             )
         """)
         log(f"Table {opportunities_table} ready")
@@ -336,7 +312,7 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
         # Clear opportunities table
         log(f"Clearing existing data from {opportunities_table}...")
-        cursor.execute(f"TRUNCATE TABLE {opportunities_table}")
+        cursor.execute(f"DELETE FROM [{opportunities_table}]")
         log("Table cleared")
         log("")
 
@@ -351,18 +327,18 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
         if selected_market_groups and len(selected_market_groups) > 0:
             market_groups_join = "JOIN market_groups mg ON mg.marketGroupID = t.marketGroupID"
-            placeholders = ', '.join(['%s'] * len(selected_market_groups))
+            placeholders = ', '.join(['?'] * len(selected_market_groups))
             market_groups_filter = f"AND mg.topGroupID IN ({placeholders})"
             log(f"Filtering by {len(selected_market_groups)} market group(s): {selected_market_groups}")
 
         # Build competitors filter
         competitors_filter = ""
         if max_competitors is not None:
-            competitors_filter = f"AND competitors < %s"
+            competitors_filter = f"AND competitors < ?"
             log(f"Filtering by max competitors: {max_competitors}")
 
         query = f"""
-            INSERT INTO {opportunities_table}
+            INSERT INTO [{opportunities_table}]
             (type_id, typeName, buy_orders_count, sell_orders_count,
              min_sell_price, max_buy_price, profit, competitors, qty_avg)
             SELECT
@@ -375,28 +351,28 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                 ROUND((MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) -
                        MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END)) /
                        MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) * 100) AS profit,
-                GREATEST(
-                    COUNT(CASE WHEN DATEDIFF(NOW(), issued) < 2 AND is_buy_order = 1 THEN 1 ELSE NULL END),
-                    COUNT(CASE WHEN DATEDIFF(NOW(), issued) < 2 AND is_buy_order = 0 THEN 1 ELSE NULL END)
+                MAX(
+                    COUNT(CASE WHEN julianday('now') - julianday(issued) < 2 AND is_buy_order = 1 THEN 1 ELSE NULL END),
+                    COUNT(CASE WHEN julianday('now') - julianday(issued) < 2 AND is_buy_order = 0 THEN 1 ELSE NULL END)
                 ) as competitors,
                 NULL as qty_avg
-            FROM {orders_table} o
+            FROM [{orders_table}] o
             JOIN types t ON t.typeID = o.type_id
             WHERE o.type_id IN (
                 SELECT
                     o.type_id
-                FROM {orders_table} o
+                FROM [{orders_table}] o
                 JOIN types t ON t.typeID = o.type_id
                 {market_groups_join}
                 WHERE o.duration < 365
                     AND o.is_buy_order = 0
                     {market_groups_filter}
                 GROUP BY o.type_id
-                HAVING MIN(CASE WHEN o.is_buy_order = 0 THEN price END) > %s
-                    AND MIN(CASE WHEN o.is_buy_order = 0 THEN price END) < %s
+                HAVING MIN(CASE WHEN o.is_buy_order = 0 THEN price END) > ?
+                    AND MIN(CASE WHEN o.is_buy_order = 0 THEN price END) < ?
             )
             GROUP BY o.type_id, t.typeName
-            HAVING profit > %s AND profit < %s {competitors_filter}
+            HAVING profit > ? AND profit < ? {competitors_filter}
             ORDER BY o.type_id
         """
 
@@ -409,17 +385,15 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
             params.append(max_competitors)
 
         cursor.execute(query, params)
-        connection.commit()
-
-        print(query, min_sell_price, max_buy_price, min_profit_percent, max_profit_percent)
+        conn.commit()
 
         log("Query executed successfully")
         log("")
 
         # Populate daily_orders and daily_volume for each opportunity
         log("Fetching type_ids from opportunities...")
-        cursor.execute(f"SELECT type_id FROM {opportunities_table}")
-        type_ids = [row['type_id'] for row in cursor.fetchall()]
+        cursor.execute(f"SELECT type_id FROM [{opportunities_table}]")
+        type_ids = [row[0] for row in cursor.fetchall()]
         log(f"Found {len(type_ids)} opportunities to process")
         log("")
 
@@ -431,16 +405,16 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
             # Check if data exists in history table (created within last 3 days)
             cursor.execute(f"""
                 SELECT order_count, volume
-                FROM {history_table}
-                WHERE type_id = %s AND DATEDIFF(NOW(), created_at) < 3
+                FROM [{history_table}]
+                WHERE type_id = ? AND julianday('now') - julianday(created_at) < 3
             """, (type_id,))
 
             history_row = cursor.fetchone()
 
             if history_row:
                 # Use existing history data
-                daily_orders = history_row['order_count']
-                daily_volume = history_row['volume']
+                daily_orders = history_row[0]
+                daily_volume = history_row[1]
             else:
                 # Fetch from API and calculate averages
                 try:
@@ -462,12 +436,12 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
                             # Insert or update history table
                             cursor.execute(f"""
-                                INSERT INTO {history_table} (type_id, order_count, volume, created_at)
-                                VALUES (%s, %s, %s, NOW())
-                                ON DUPLICATE KEY UPDATE
-                                    order_count = VALUES(order_count),
-                                    volume = VALUES(volume),
-                                    created_at = NOW()
+                                INSERT INTO [{history_table}] (type_id, order_count, volume, created_at)
+                                VALUES (?, ?, ?, datetime('now'))
+                                ON CONFLICT(type_id) DO UPDATE SET
+                                    order_count = excluded.order_count,
+                                    volume = excluded.volume,
+                                    created_at = datetime('now')
                             """, (type_id, daily_orders, daily_volume))
                         else:
                             daily_orders = 0
@@ -487,19 +461,19 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
             # Update opportunities table with daily statistics
             cursor.execute(f"""
-                UPDATE {opportunities_table}
-                SET daily_orders = %s, daily_volume = %s
-                WHERE type_id = %s
+                UPDATE [{opportunities_table}]
+                SET daily_orders = ?, daily_volume = ?
+                WHERE type_id = ?
             """, (daily_orders, daily_volume, type_id))
 
-        connection.commit()
+        conn.commit()
         log("Daily statistics populated successfully")
         log("")
 
         # Fetch results
         log("Fetching opportunities from database...")
-        cursor.execute(f"SELECT * FROM {opportunities_table}")
-        opportunities = cursor.fetchall()
+        cursor.execute(f"SELECT * FROM [{opportunities_table}]")
+        opportunities = [dict(row) for row in cursor.fetchall()]
 
         log("")
         log("="*60)
@@ -508,33 +482,20 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
         return opportunities
 
-    except Error as e:
-        log(f"Database error: {e}")
-        if connection:
-            connection.rollback()
-        return None
     except Exception as e:
-        log(f"Error: {e}")
-        if connection:
-            connection.rollback()
+        log(f"Database error: {e}")
+        if conn:
+            conn.rollback()
         return None
     finally:
-        if connection and connection.is_connected():
-            cursor.close()
-            connection.close()
-            log("MySQL connection closed")
+        if conn:
+            conn.close()
+            log("Database connection closed")
 
 
 def export_opportunities_to_csv(region_id, callback=None):
     """
     Export opportunities table to CSV file
-
-    Parameters:
-    region_id - EVE Online region ID
-    callback - optional callback function for progress messages
-
-    Returns:
-    str - Path to exported CSV file, or None if failed
     """
 
     def log(message):
@@ -544,7 +505,7 @@ def export_opportunities_to_csv(region_id, callback=None):
             callback(message)
 
     settings = _get_settings()
-    connection = None
+    conn = None
 
     try:
         log("="*60)
@@ -553,10 +514,10 @@ def export_opportunities_to_csv(region_id, callback=None):
         log("")
 
         # Connect to database
-        log("Connecting to MySQL database...")
-        connection = mysql.connector.connect(**settings.DB_CONFIG)
-        cursor = connection.cursor(dictionary=True)
-        log("Successfully connected to MySQL")
+        log("Connecting to SQLite database...")
+        conn = _get_connection(settings)
+        cursor = conn.cursor()
+        log("Successfully connected to SQLite")
         log("")
 
         opportunities_table = f"opportunities_{region_id}"
@@ -564,19 +525,19 @@ def export_opportunities_to_csv(region_id, callback=None):
         # Check if opportunities table exists
         cursor.execute("""
             SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = %s AND table_name = %s
-        """, (settings.DB_CONFIG['database'], opportunities_table))
+            FROM sqlite_master
+            WHERE type='table' AND name=?
+        """, (opportunities_table,))
 
-        if cursor.fetchone()['COUNT(*)'] == 0:
+        if cursor.fetchone()[0] == 0:
             log(f"Error: Opportunities table {opportunities_table} doesn't exist")
             log("Please run 'Find Opportunities' first")
             return None
 
         # Fetch data
         log(f"Fetching data from {opportunities_table}...")
-        cursor.execute(f"SELECT * FROM {opportunities_table}")
-        opportunities = cursor.fetchall()
+        cursor.execute(f"SELECT * FROM [{opportunities_table}]")
+        opportunities = [dict(row) for row in cursor.fetchall()]
 
         if not opportunities:
             log("No data to export")
@@ -587,7 +548,6 @@ def export_opportunities_to_csv(region_id, callback=None):
 
         # Export to CSV
         import csv
-        import os
         from datetime import datetime
         from src.database.models import get_setting
 
@@ -622,17 +582,13 @@ def export_opportunities_to_csv(region_id, callback=None):
 
         return filepath
 
-    except Error as e:
+    except Exception as e:
         log(f"Database error: {e}")
         return None
-    except Exception as e:
-        log(f"Error: {e}")
-        return None
     finally:
-        if connection and connection.is_connected():
-            cursor.close()
-            connection.close()
-            log("MySQL connection closed")
+        if conn:
+            conn.close()
+            log("Database connection closed")
 
 
 if __name__ == "__main__":

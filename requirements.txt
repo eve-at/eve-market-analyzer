@@ -4,8 +4,6 @@ flet>=0.80.0
 # HTTP Requests
 requests>=2.31.0
 
-# Database
-mysql-connector-python>=8.0.33
 
 # Data Processing
 pandas>=2.0.0

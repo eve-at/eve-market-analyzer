@@ -509,6 +509,8 @@ class CharacterScreen:
 
             # Check if token needs refresh
             esi_api = ESIAPI()
+            if token_expiry and isinstance(token_expiry, str):
+                token_expiry = datetime.fromisoformat(token_expiry)
             if not access_token or not token_expiry or datetime.now() >= token_expiry:
                 log_callback("Access token expired or missing, refreshing...")
 

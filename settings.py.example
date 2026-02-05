@@ -1,10 +1,5 @@
-# MySQL database connection settings
-DB_CONFIG = {
-    'host': 'localhost',
-    'database': 'evetrader',
-    'user': 'user',
-    'password': 'pass'
-}
+# SQLite database path
+DB_PATH = 'data/evetrader.db'
 
 # Static data
 REGIONS_DF = 'https://www.fuzzwork.co.uk/dump/latest/mapRegions.csv'

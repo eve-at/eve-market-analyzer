@@ -1,14 +1,14 @@
 """Database validation utilities"""
-import mysql.connector
-from mysql.connector import Error
+import sqlite3
+import os
 import importlib
 
 
-def _get_db_config():
-    """Reload and get DB_CONFIG from settings module"""
+def _get_db_path():
+    """Reload and get DB_PATH from settings module"""
     import settings
     importlib.reload(settings)
-    return settings.DB_CONFIG
+    return settings.DB_PATH
 
 
 class DatabaseStatus:
@@ -44,21 +44,16 @@ def validate_database():
     Returns:
         DatabaseStatus object with validation results
     """
-    connection = None
+    conn = None
     try:
-        # Reload settings to get fresh DB_CONFIG
-        db_config = _get_db_config()
+        db_path = _get_db_path()
 
-        # Try to connect to database
-        connection = mysql.connector.connect(**db_config)
+        # Create data directory if needed
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-        if not connection.is_connected():
-            return DatabaseStatus(
-                connected=False,
-                error_message="Failed to connect to database"
-            )
-
-        cursor = connection.cursor()
+        # Check if DB file exists; if not, create it
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
 
         # Check regions table
         regions_count = 0
@@ -66,9 +61,8 @@ def validate_database():
             cursor.execute("SELECT COUNT(*) FROM regions")
             result = cursor.fetchone()
             regions_count = result[0] if result else 0
-        except Error as e:
-            # Table might not exist
-            print(f"Error checking regions table: {e}")
+        except sqlite3.OperationalError:
+            # Table doesn't exist
             regions_count = 0
 
         # Check types table
@@ -77,9 +71,8 @@ def validate_database():
             cursor.execute("SELECT COUNT(*) FROM types WHERE published = 1")
             result = cursor.fetchone()
             types_count = result[0] if result else 0
-        except Error as e:
-            # Table might not exist
-            print(f"Error checking types table: {e}")
+        except sqlite3.OperationalError:
+            # Table doesn't exist
             types_count = 0
 
         return DatabaseStatus(
@@ -90,17 +83,11 @@ def validate_database():
             types_count=types_count
         )
 
-    except Error as e:
-        return DatabaseStatus(
-            connected=False,
-            error_message=str(e)
-        )
     except Exception as e:
         return DatabaseStatus(
             connected=False,
             error_message=str(e)
         )
     finally:
-        if connection and connection.is_connected():
-            cursor.close()
-            connection.close()
+        if conn:
+            conn.close()

@@ -2,6 +2,8 @@
 
 A comprehensive desktop application for EVE Online traders featuring market analysis, historical data viewing, and trade opportunity finding.
 
+![Profit by Month](static/interface/profit_by_month_page.png)
+
 ## Features
 
 - ✅ **Menu-driven interface** with multiple tools for traders
@@ -134,6 +136,44 @@ eve_market_analyzer/
         ├── validator.py           # Database validation
         └── data_loader.py         # Data loading utilities
 ```
+
+## Screenshots
+
+### Welcome Page
+
+Initial page that checks database connection. If the database doesn't exist, it will be created automatically. If static data is missing, you'll be prompted to import it.
+
+![Welcome Page](static/interface/welcome_page.png)
+
+### Main Menu
+
+The main page where you can select the section you need.
+
+![Main Page](static/interface/main_page.png)
+
+### Character & Profit Reports
+
+Log in with your EVE character and set your Sales Tax and Broker Fee values for buying and selling (if you buy on a citadel and sell at an NPC station, these values may differ). These values are used when calculating profitability. On the same page you can view trade reports by months, days, and items. To load data from the game API, update your orders every time you open the application.
+
+![Profit by Month](static/interface/profit_by_month_page.png)
+
+![Profit by Days](static/interface/profit_by_days_page.png)
+
+![Profit by Items](static/interface/profit_by_items_page.png)
+
+### Trade Opportunities Finder
+
+Set your parameters and the application will fetch all orders for the selected region and find suitable trade positions. This may take a while — Jita has around 500,000 orders, which can take about 15 minutes to process.
+
+![Trade Opportunities - Fetching](static/interface/trade_opportunities_finder_page_fetching.png)
+
+![Trade Opportunities - Results](static/interface/trade_opportunities_finder_page_result.png)
+
+### Courier Path Finder
+
+To reduce Broker Fee you need to grind standings with a faction and corporation. One way to do this is courier missions. I used to take missions in bulk and then deliver goods. To plan an optimal route, the Courier Path Finder was developed — the application detects your character's current location, you specify the list of stations to visit, and it calculates the optimal path. This path is set in-game via the API. Currently the application does not account for security level and plots the shortest route. Be careful!
+
+![Courier Path Finder](static/interface/courrier_path_finder_page.png)
 
 ## Troubleshooting
 

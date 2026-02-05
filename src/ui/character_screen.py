@@ -374,6 +374,11 @@ class CharacterScreen:
             create_character_inventory_table(character_data['character_id'])
             create_character_profit_table(character_data['character_id'])
 
+            # Load full character data from DB (preserves broker fees, sales tax)
+            full_character = get_character(character_data['character_id'])
+            if full_character:
+                character_data = full_character
+
             # Update UI
             self.current_character = character_data
             self.character_avatar.src = character_data.get('character_portrait_url')
@@ -392,6 +397,11 @@ class CharacterScreen:
             self.logout_button.visible = True
             self.update_orders_button.visible = True
             self.tabs_container.visible = True
+
+            # Update broker fee / sales tax fields from DB
+            self.broker_fee_sell_field.value = str(character_data.get('broker_fee_sell', 3.00))
+            self.broker_fee_buy_field.value = str(character_data.get('broker_fee_buy', 3.00))
+            self.sales_tax_field.value = str(character_data.get('sales_tax', 7.50))
 
             self.status_text.value = f"Successfully logged in as {character_data.get('character_name')}"
             self.status_text.color = ft.Colors.GREEN
@@ -865,7 +875,7 @@ class CharacterScreen:
 
             row_container = ft.Container(
                 content=row_content,
-                padding=10,
+                padding=ft.Padding(10, 0, 10, 0),
                 border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_300)),
             )
             # Set hover with reference to container
@@ -939,7 +949,7 @@ class CharacterScreen:
 
             row_container = ft.Container(
                 content=row_content,
-                padding=10,
+                padding=ft.Padding(10, 0, 10, 0),
                 border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.GREY_300)),
             )
             # Set hover with reference to container

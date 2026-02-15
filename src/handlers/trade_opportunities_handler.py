@@ -117,7 +117,7 @@ def update_orders(region_id, callback=None):
                 location_id INTEGER,
                 min_volume INTEGER,
                 price REAL,
-                range_type TEXT,
+                range TEXT,
                 system_id INTEGER,
                 type_id INTEGER,
                 volume_remain INTEGER,
@@ -170,7 +170,7 @@ def update_orders(region_id, callback=None):
                     cursor.execute(f"""
                         INSERT OR REPLACE INTO [{table_name}]
                         (order_id, duration, is_buy_order, issued, location_id,
-                         min_volume, price, range_type, system_id, type_id,
+                         min_volume, price, range, system_id, type_id,
                          volume_remain, volume_total)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (

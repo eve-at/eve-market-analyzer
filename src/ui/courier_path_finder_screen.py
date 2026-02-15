@@ -549,31 +549,45 @@ class CourierPathFinderScreen:
                 # Refresh token if needed
                 if self.character:
                     access_token = self.character.get('access_token')
+                    refresh_token = self.character.get('refresh_token')
                     token_expiry = self.character.get('token_expiry')
                     if token_expiry and isinstance(token_expiry, str):
                         token_expiry = datetime.fromisoformat(token_expiry)
 
-                    # Check if token is expired
-                    if token_expiry and datetime.now() >= token_expiry:
-                        token_result = refresh_access_token(self.character.get('refresh_token'))
-                        if token_result:
-                            access_token = token_result['access_token']
-                            # Update character data
-                            self.character['access_token'] = access_token
-                            self.character['token_expiry'] = token_result['token_expiry']
-                            save_character(
-                                self.character_id,
-                                self.character['character_name'],
-                                access_token,
-                                self.character['refresh_token'],
-                                token_result['token_expiry']
-                            )
+                    # Check if token is expired or missing
+                    if not access_token or not token_expiry or datetime.now() >= token_expiry:
+                        if refresh_token:
+                            token_result = refresh_access_token(refresh_token)
+                            if token_result:
+                                access_token = token_result['access_token']
+                                # Update character data
+                                self.character['access_token'] = access_token
+                                self.character['token_expiry'] = token_result['token_expiry']
+                                save_character({
+                                    'character_id': self.character['character_id'],
+                                    'character_name': self.character['character_name'],
+                                    'access_token': access_token,
+                                    'token_expiry': token_result['token_expiry']
+                                })
+                            else:
+                                access_token = None
+                        else:
+                            access_token = None
 
                     # Set waypoints via ESI
                     if access_token:
                         waypoint_result = set_autopilot_waypoints(station_ids, access_token)
                         if not waypoint_result['success']:
                             print(f"Failed to set waypoints: {waypoint_result.get('error')}")
+                    else:
+                        async def show_token_error():
+                            self.page.snack_bar = ft.SnackBar(
+                                content=ft.Text("Access token expired. Please log in again to set waypoints."),
+                                duration=5000
+                            )
+                            self.page.snack_bar.open = True
+                            self.page.update()
+                        self.page.run_task(show_token_error)
 
             # Update UI after completion
             async def update_ui():

@@ -1,5 +1,9 @@
 """EVE Online Market Helper - Main Entry Point"""
 import flet as ft
+import subprocess
+import sys
+import os
+import ctypes
 from src.ui import (
     InitScreen,
     WelcomeScreen,
@@ -8,12 +12,14 @@ from src.ui import (
     SettingsScreen,
     CharacterScreen,
     AppBar,
-    AccountingToolScreen,
     CourierPathFinderScreen
 )
 from src.app import EVEMarketApp
 from src.database import load_regions_and_items, create_tables, get_setting
 from settings import MARKETLOGS_DIR
+
+ACCOUNTING_TOOL_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".accounting_tool.lock")
+ACCOUNTING_TOOL_WINDOW_TITLE = "EVE Accounting Tool"
 
 
 class MainApp:
@@ -35,7 +41,7 @@ class MainApp:
         self.settings_screen = None
         self.character_screen = None
         self.update_data_screen = None
-        self.accounting_tool_screen = None
+        self.accounting_tool_process = None
         self.courier_path_finder_screen = None
 
         # App bar
@@ -291,44 +297,47 @@ class MainApp:
         self.page.update()
 
     def show_accounting_tool(self):
-        """Show accounting tool screen"""
-        # Stop existing observer if there's an old accounting_tool_screen
-        if self.accounting_tool_screen:
-            self.accounting_tool_screen.stop_file_monitoring()
+        """Open accounting tool in a separate window"""
+        if self._is_accounting_tool_running():
+            self._focus_accounting_tool_window()
+            return
 
-        self.page.controls.clear()
-
-        # Create app bar with back button
-        self.app_bar = AppBar(
-            self.page,
-            on_character_click=self.show_character,
-            on_settings_click=self.show_settings,
-            on_title_click=self.show_main_menu,
-            show_back_button=True,
-            on_back_click=self.on_accounting_tool_back
+        # Launch as a separate process
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accounting_tool_app.py")
+        self.accounting_tool_process = subprocess.Popen(
+            [sys.executable, script_path],
+            creationflags=subprocess.DETACHED_PROCESS
         )
 
-        self.accounting_tool_screen = AccountingToolScreen(
-            page=self.page,
-            on_back_callback=self.show_main_menu
-        )
+    def _is_accounting_tool_running(self):
+        """Check if the accounting tool window is already running"""
+        if not os.path.exists(ACCOUNTING_TOOL_LOCK_FILE):
+            return False
+        try:
+            with open(ACCOUNTING_TOOL_LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except (ValueError, OSError):
+            return False
 
-        self.page.add(
-            ft.Column([
-                self.app_bar.get(),
-                ft.Container(content=self.accounting_tool_screen.build(), expand=True)
-            ], spacing=0, expand=True)
-        )
-        self.page.update()
+    def _focus_accounting_tool_window(self):
+        """Find and focus the existing Accounting Tool window"""
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, ACCOUNTING_TOOL_WINDOW_TITLE)
 
-        # Start file monitoring
-        self.accounting_tool_screen.start_file_monitoring()
-
-    def on_accounting_tool_back(self):
-        """Handle back from accounting tool"""
-        if self.accounting_tool_screen:
-            self.accounting_tool_screen.stop_file_monitoring()
-        self.show_main_menu()
+        if hwnd:
+            SW_RESTORE = 9
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            # Simulate Alt key press to bypass Windows foreground restrictions
+            user32.keybd_event(0x12, 0, 0, 0)
+            user32.SetForegroundWindow(hwnd)
+            user32.keybd_event(0x12, 0, 2, 0)
 
     def show_courier_path_finder(self):
         """Show courier path finder screen"""

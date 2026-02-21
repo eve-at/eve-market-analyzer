@@ -349,8 +349,8 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
                 MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) AS min_sell_price,
                 MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END) AS max_buy_price,
                 ROUND((MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) -
-                       MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END)) /
-                       MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END) * 100) AS profit,
+                       MAX(CASE WHEN o.is_buy_order = 1 THEN o.price END)) * 100.0 /
+                       MIN(CASE WHEN o.is_buy_order = 0 THEN o.price END)) AS profit,
                 MAX(
                     COUNT(CASE WHEN julianday('now') - julianday(issued) < 2 AND is_buy_order = 1 THEN 1 ELSE NULL END),
                     COUNT(CASE WHEN julianday('now') - julianday(issued) < 2 AND is_buy_order = 0 THEN 1 ELSE NULL END)

@@ -103,6 +103,38 @@ class ESIAPI:
             print(f"Error fetching character orders history: {e}")
             return (None, False)
 
+    def get_character_wallet_transactions(self, character_id, access_token, from_id=None):
+        """Get character wallet transactions from ESI API
+
+        Args:
+            character_id: Character ID
+            access_token: Valid access token
+            from_id: Optional transaction_id — return only transactions older than this ID (for pagination)
+
+        Returns:
+            list: Transaction objects, or None if failed
+        """
+        try:
+            url = f"{self.ESI_BASE_URL}/characters/{character_id}/wallet/transactions/"
+            headers = {'Authorization': f'Bearer {access_token}'}
+            params = {}
+            if from_id is not None:
+                params['from_id'] = from_id
+
+            response = requests.get(url, headers=headers, params=params)
+
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 304:
+                return []
+            else:
+                print(f"Failed to fetch wallet transactions: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"Error fetching wallet transactions: {e}")
+            return None
+
     def fetch_all_character_orders_history(self, character_id, access_token, progress_callback=None):
         """Fetch all pages of character order history
 

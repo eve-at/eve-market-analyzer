@@ -8,7 +8,12 @@ A comprehensive desktop application for EVE Online traders featuring market anal
 
 - ✅ **Menu-driven interface** with multiple tools for traders
 - ✅ **Market History Viewer** - Real-time historical data from EVE Online ESI API
-- ✅ **Trade Opportunities Finder** - Search for profitable trades (coming soon)
+- ✅ **Trade Opportunities Finder** - Search for profitable trades between regions
+- ✅ **Accounting Tool** - Opens in a dedicated window; monitors market log exports and calculates profit/spread in real time
+- ✅ **Wallet Transactions Import** - Fetches trading history directly from ESI, with incremental updates (no duplicates)
+- ✅ **Profit Reports** - By month, by day, by item; calculated via FIFO from real wallet transactions
+- ✅ **Transactions Tab** - Browse the last 200 individual buy/sell events with item names and totals
+- ✅ **Courier Path Finder** - Optimal delivery route planner with in-game route setting via API
 - ✅ **Integrated Settings** - Customize broker fees, taxes, and paths
 - ✅ **Automatic Data Import** - Built-in static data management from Fuzzwork
 - ✅ **Smart Autocomplete** - Fast region and item search
@@ -117,24 +122,39 @@ EVE Online frequently adds new items, regions, and makes balance changes. To upd
 ## Project Structure
 
 ```
-eve_market_analyzer/
-├── main.py                         # Main entry point
-├── settings.py.example            # Example configuration file
-├── settings.py                    # Your configuration (not in git)
-├── requirements.txt               # Python dependencies
-├── data/                          # SQLite database and CSV files (auto-created)
-└── src/                           # Source code package
-    ├── app.py                     # Main application class
-    ├── handlers/                  # Event handlers
-    │   ├── market_log_handler.py  # File system monitoring
-    │   └── import_static_data.py  # Static data import functionality
-    ├── ui/                        # UI components
-    │   ├── init_screen.py         # Initialization/setup screen
-    │   ├── autocomplete_field.py  # Autocomplete input field
-    │   └── suggestion_item.py     # Suggestion list item
-    └── database/                  # Database operations
-        ├── validator.py           # Database validation
-        └── data_loader.py         # Data loading utilities
+historical_prices/
+├── main.py                              # Main entry point and navigation controller
+├── accounting_tool_app.py               # Standalone Accounting Tool window (separate process)
+├── settings.py.example                  # Example configuration file
+├── settings.py                          # Your configuration (not in git)
+├── requirements.txt                     # Python dependencies
+├── data/                                # SQLite database (auto-created, not in git)
+└── src/
+    ├── app.py                           # Market History screen logic
+    ├── auth/
+    │   ├── eve_sso.py                   # EVE Online SSO authentication
+    │   └── esi_api.py                   # ESI API client (orders history, wallet transactions)
+    ├── handlers/
+    │   ├── export_file_handler.py       # Watchdog handler for market log exports
+    │   └── import_static_data.py        # Static data import from Fuzzwork
+    ├── ui/
+    │   ├── init_screen.py               # Initialization / static data import screen
+    │   ├── welcome_screen.py            # Welcome screen
+    │   ├── main_menu.py                 # Main menu with tool cards
+    │   ├── app_bar.py                   # Top navigation bar
+    │   ├── character_screen.py          # Character login, wallet import, profit reports
+    │   ├── accounting_tool_screen.py    # Real-time spread/profit calculator
+    │   ├── market_history_screen.py     # Historical price chart and table
+    │   ├── trade_opportunities_screen.py# Cross-region trade opportunity finder
+    │   ├── courier_path_finder_screen.py# Optimal delivery route planner
+    │   ├── settings_screen.py           # Application settings
+    │   ├── autocomplete_field.py        # Autocomplete input component
+    │   └── suggestion_item.py           # Suggestion list item component
+    ├── database/
+    │   └── models.py                    # All DB schema, CRUD, and profit calculation logic
+    └── utils/
+        ├── export_parser.py             # Market log export file parser
+        └── price_calculator.py          # Tick size, profit, and competitor calculations
 ```
 
 ## Screenshots
@@ -153,7 +173,13 @@ The main page where you can select the section you need.
 
 ### Character & Profit Reports
 
-Log in with your EVE character and set your Sales Tax and Broker Fee values for buying and selling (if you buy on a citadel and sell at an NPC station, these values may differ). These values are used when calculating profitability. On the same page you can view trade reports by months, days, and items. To load data from the game API, update your orders every time you open the application.
+Log in with your EVE character and set your Sales Tax and Broker Fee values for buying and selling (if you buy on a citadel and sell at an NPC station, these values may differ). These values are used when calculating profitability.
+
+Click **Pull Wallet Transactions** to import your trading history from the ESI API:
+- **First run** - downloads the full available history (up to ~6 000+ transactions) and builds profit data from scratch
+- **Subsequent runs** - fetches only new transactions since the last import (incremental, no duplicates)
+
+Profit is calculated using **FIFO** (first in, first out) across four tabs: by month, by day, by item, and a raw **Transactions** tab showing individual buy/sell events.
 
 ![Profit by Month](static/interface/profit_by_month_page.png)
 
@@ -161,9 +187,19 @@ Log in with your EVE character and set your Sales Tax and Broker Fee values for 
 
 ![Profit by Items](static/interface/profit_by_items_page.png)
 
+### Accounting Tool
+
+Opens in a **separate window** - the main application stays fully usable while it's open. Monitors your EVE market log exports in real time and shows:
+- Current item spread, min sell / max buy prices
+- Profit % and ISK amount
+- Competitor count on both sides
+- Last buy price from your wallet transaction history
+
+Re-clicking the menu button focuses the existing window instead of opening a second one.
+
 ### Trade Opportunities Finder
 
-Set your parameters and the application will fetch all orders for the selected region and find suitable trade positions. This may take a while — Jita has around 500,000 orders, which can take about 15 minutes to process.
+Set your parameters and the application will fetch all orders for the selected region and find suitable trade positions. This may take a while - Jita has around 500,000 orders, which can take about 15 minutes to process.
 
 ![Trade Opportunities - Fetching](static/interface/trade_opportunities_finder_page_fetching.png)
 
@@ -171,7 +207,7 @@ Set your parameters and the application will fetch all orders for the selected r
 
 ### Courier Path Finder
 
-To reduce Broker Fee you need to grind standings with a faction and corporation. One way to do this is courier missions. I used to take missions in bulk and then deliver goods. To plan an optimal route, the Courier Path Finder was developed — the application detects your character's current location, you specify the list of stations to visit, and it calculates the optimal path. This path is set in-game via the API. Currently the application does not account for security level and plots the shortest route. Be careful!
+To reduce Broker Fee you need to grind standings with a faction and corporation. One way to do this is courier missions. I used to take missions in bulk and then deliver goods. To plan an optimal route, the Courier Path Finder was developed - the application detects your character's current location, you specify the list of stations to visit, and it calculates the optimal path. This path is set in-game via the API. Currently the application does not account for security level and plots the shortest route. Be careful!
 
 ![Courier Path Finder](static/interface/courrier_path_finder_page.png)
 

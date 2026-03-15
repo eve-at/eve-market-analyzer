@@ -6,10 +6,13 @@ from src.auth.eve_sso import EVESSO
 from src.auth.esi_api import ESIAPI
 from src.database.models import (
     get_character, save_character, get_current_character_id,
-    save_setting, create_character_history_table, save_character_order_history,
+    save_setting, create_character_history_table,
     create_character_inventory_table, create_character_profit_table,
-    process_character_orders, get_profit_by_months, get_profit_by_days,
-    get_profit_by_items
+    get_profit_by_months, get_profit_by_days,
+    get_profit_by_items,
+    create_character_wallet_transactions_table, save_wallet_transactions,
+    get_max_wallet_transaction_id, get_min_wallet_transaction_id,
+    clear_character_profit_data, process_wallet_transactions, get_wallet_transactions,
 )
 
 
@@ -31,6 +34,7 @@ class CharacterScreen:
             create_character_history_table(character_id)
             create_character_inventory_table(character_id)
             create_character_profit_table(character_id)
+            create_character_wallet_transactions_table(character_id)
 
         # Load settings from database or use defaults
         broker_fee_sell = "3.00"
@@ -130,13 +134,13 @@ class CharacterScreen:
         # Status text
         self.status_text = ft.Text("", size=14)
 
-        # Update Historical Orders button
-        self.update_orders_button = ft.ElevatedButton(
-            "Pull Character's Orders",
-            on_click=self.on_update_orders,
+        # Pull Wallet Transactions button
+        self.update_wallet_button = ft.ElevatedButton(
+            "Pull Wallet Transactions",
+            on_click=self.on_update_wallet_transactions,
             visible=bool(self.current_character),
             style=ft.ButtonStyle(
-                bgcolor=ft.Colors.GREEN,
+                bgcolor=ft.Colors.BLUE_700,
                 color=ft.Colors.WHITE,
                 padding=ft.Padding(20, 10, 20, 10)
             )
@@ -250,7 +254,7 @@ class CharacterScreen:
             content=ft.Column([
                 ft.Container(height=10),
                 ft.Row([
-                    self.update_orders_button
+                    self.update_wallet_button,
                 ], alignment=ft.MainAxisAlignment.START),
                 ft.Container(height=10),
                 self.log_container
@@ -278,6 +282,47 @@ class CharacterScreen:
             padding=10,
             expand=True,
             visible=False
+        )
+
+        # Transactions tab content
+        self.transactions_column = ft.Column(
+            scroll=ft.ScrollMode.AUTO,
+            spacing=0,
+        )
+        self.transactions_progress = ft.ProgressRing(visible=False, width=30, height=30)
+        self.transactions_content = ft.Container(
+            content=ft.Column([
+                ft.Container(height=10),
+                ft.Row([
+                    ft.Text("Last 200 transactions", size=13, color=ft.Colors.GREY_600),
+                    ft.Container(width=15),
+                    self.transactions_progress,
+                ], alignment=ft.MainAxisAlignment.START),
+                ft.Container(height=8),
+                ft.Container(
+                    content=ft.Row([
+                        ft.Text("Date", size=12, weight=ft.FontWeight.BOLD, width=155),
+                        ft.Text("Item", size=12, weight=ft.FontWeight.BOLD, expand=True),
+                        ft.Text("B/S", size=12, weight=ft.FontWeight.BOLD, width=35),
+                        ft.Text("Qty", size=12, weight=ft.FontWeight.BOLD, width=65, text_align=ft.TextAlign.RIGHT),
+                        ft.Text("Unit Price", size=12, weight=ft.FontWeight.BOLD, width=110, text_align=ft.TextAlign.RIGHT),
+                        ft.Text("Total ISK", size=12, weight=ft.FontWeight.BOLD, width=130, text_align=ft.TextAlign.RIGHT),
+                    ]),
+                    bgcolor=ft.Colors.GREY_200,
+                    padding=ft.Padding(8, 5, 8, 5),
+                    border_radius=ft.border_radius.only(top_left=5, top_right=5),
+                ),
+                ft.Container(
+                    content=self.transactions_column,
+                    border=ft.border.all(1, ft.Colors.GREY_300),
+                    border_radius=ft.border_radius.only(bottom_left=5, bottom_right=5),
+                    padding=0,
+                    expand=True,
+                ),
+            ], spacing=0, expand=True),
+            padding=10,
+            expand=True,
+            visible=False,
         )
 
         # Create custom tab buttons (instead of Tabs component)
@@ -319,11 +364,21 @@ class CharacterScreen:
             ink=True
         )
 
+        self.transactions_tab_button = ft.Container(
+            content=ft.Text("Transactions", size=14),
+            padding=ft.Padding(15, 5, 15, 5),
+            bgcolor=ft.Colors.GREY_300,
+            border_radius=ft.border_radius.only(top_left=5, top_right=5),
+            on_click=lambda _: self.switch_tab("transactions"),
+            ink=True
+        )
+
         self.tab_buttons_row = ft.Row([
             self.orders_tab_button,
             self.months_tab_button,
             self.days_tab_button,
-            self.items_tab_button
+            self.items_tab_button,
+            self.transactions_tab_button,
         ], spacing=2)
 
         # Tabs container to hold both tab bar and content
@@ -331,7 +386,8 @@ class CharacterScreen:
             self.tab_buttons_row,
             ft.Container(height=2, bgcolor=ft.Colors.BLUE),  # Separator line
             self.orders_import_content,
-            self.profit_reports_content
+            self.profit_reports_content,
+            self.transactions_content,
         ], spacing=0, expand=True, visible=bool(self.current_character))
 
         # Main container
@@ -373,6 +429,7 @@ class CharacterScreen:
             create_character_history_table(character_data['character_id'])
             create_character_inventory_table(character_data['character_id'])
             create_character_profit_table(character_data['character_id'])
+            create_character_wallet_transactions_table(character_data['character_id'])
 
             # Load full character data from DB (preserves broker fees, sales tax)
             full_character = get_character(character_data['character_id'])
@@ -395,7 +452,7 @@ class CharacterScreen:
             ]
             self.eve_login_button.visible = False
             self.logout_button.visible = True
-            self.update_orders_button.visible = True
+            self.update_wallet_button.visible = True
             self.tabs_container.visible = True
 
             # Update broker fee / sales tax fields from DB
@@ -421,7 +478,7 @@ class CharacterScreen:
         self.character_info_row.visible = False
         self.eve_login_button.visible = True
         self.logout_button.visible = False
-        self.update_orders_button.visible = False
+        self.update_wallet_button.visible = False
         self.tabs_container.visible = False
         self.log_container.visible = False
 
@@ -474,40 +531,32 @@ class CharacterScreen:
 
         self.page.update()
 
-    def on_update_orders(self, e):
-        """Handle Update Historical Orders button click"""
+    # ------------------------------------------------------------------
+    # Wallet transactions import
+    # ------------------------------------------------------------------
+
+    def on_update_wallet_transactions(self, _):
+        """Handle Pull Wallet Transactions button click"""
         if not self.current_character:
-            self.status_text.value = "Please log in first"
-            self.status_text.color = ft.Colors.ORANGE
-            self.page.update()
             return
 
-        # Disable button during update
-        self.update_orders_button.disabled = True
+        self.update_wallet_button.disabled = True
         self.log_column.controls.clear()
         self.log_container.visible = True
         self.page.update()
 
-        # Run import in background thread
-        thread = Thread(target=self._run_orders_import, daemon=True)
+        thread = Thread(target=self._run_wallet_transactions_import, daemon=True)
         thread.start()
 
-    def _run_orders_import(self):
-        """Run orders import in background thread"""
-        def log_callback(message):
-            """Callback to display log messages"""
-            async def add_log():
+    def _run_wallet_transactions_import(self):
+        """Fetch and process wallet transactions in a background thread"""
+        def log(message):
+            async def _add():
                 self.log_column.controls.append(
-                    ft.Text(
-                        message,
-                        size=12,
-                        color=ft.Colors.BLACK,
-                        selectable=True
-                    )
+                    ft.Text(message, size=12, color=ft.Colors.BLACK, selectable=True)
                 )
                 self.page.update()
-
-            self.page.run_task(add_log)
+            self.page.run_task(_add)
 
         try:
             character_id = self.current_character['character_id']
@@ -515,130 +564,186 @@ class CharacterScreen:
             refresh_token = self.current_character.get('refresh_token')
             token_expiry = self.current_character.get('token_expiry')
 
-            log_callback(f"Starting orders import for character ID {character_id}...")
+            log("Starting wallet transactions import...")
 
-            # Check if token needs refresh
+            # Refresh token if needed
             esi_api = ESIAPI()
             if token_expiry and isinstance(token_expiry, str):
                 token_expiry = datetime.fromisoformat(token_expiry)
             if not access_token or not token_expiry or datetime.now() >= token_expiry:
-                log_callback("Access token expired or missing, refreshing...")
-
+                log("Access token expired, refreshing...")
                 if not refresh_token:
-                    log_callback("ERROR: No refresh token available. Please log in again.")
-                    async def update_ui():
-                        self.update_orders_button.disabled = False
+                    log("ERROR: No refresh token. Please log in again.")
+                    async def _reenable():
+                        self.update_wallet_button.disabled = False
                         self.page.update()
-                    self.page.run_task(update_ui)
+                    self.page.run_task(_reenable)
                     return
-
                 token_data = esi_api.refresh_access_token(refresh_token)
                 if not token_data:
-                    log_callback("ERROR: Failed to refresh access token. Please log in again.")
-                    async def update_ui():
-                        self.update_orders_button.disabled = False
+                    log("ERROR: Failed to refresh token. Please log in again.")
+                    async def _reenable():
+                        self.update_wallet_button.disabled = False
                         self.page.update()
-                    self.page.run_task(update_ui)
+                    self.page.run_task(_reenable)
                     return
-
                 access_token = token_data['access_token']
-
-                # Save updated token to database
-                save_character({
+                from src.database.models import save_character as _save_char
+                _save_char({
                     'character_id': character_id,
                     'character_name': self.current_character['character_name'],
                     'access_token': access_token,
-                    'token_expiry': token_data['token_expiry']
+                    'token_expiry': token_data['token_expiry'],
                 })
+                log("Token refreshed.")
 
-                log_callback("Access token refreshed successfully")
+            # Determine import mode
+            max_known_id = get_max_wallet_transaction_id(character_id)
+            is_first_import = max_known_id is None
 
-            # Fetch orders with pagination
-            log_callback("Fetching orders history from ESI API...")
-            page = 1
-            total_orders = 0
-            total_inserted = 0
-            total_skipped = 0
+            if is_first_import:
+                log("First import — fetching full transaction history...")
+            else:
+                log(f"Incremental import — fetching transactions newer than ID {max_known_id}...")
+
+            all_new = []
+            from_id = None  # Start from most recent
+            ESI_PAGE_SIZE = 2500  # ESI returns up to 2500 per request
 
             while True:
-                log_callback(f"Fetching page {page}...")
-
-                orders, has_more = esi_api.get_character_orders_history(
-                    character_id,
-                    access_token,
-                    page
+                transactions = esi_api.get_character_wallet_transactions(
+                    character_id, access_token, from_id
                 )
 
-                if orders is None:
-                    log_callback(f"ERROR: Failed to fetch page {page}")
+                if transactions is None:
+                    log("ERROR: Failed to fetch transactions from ESI.")
                     break
 
-                if not orders:
-                    log_callback("No more orders to fetch")
+                if not transactions:
+                    log("No more transactions returned.")
                     break
 
-                log_callback(f"Received {len(orders)} orders from page {page}")
-                total_orders += len(orders)
-
-                # Save orders to database
-                log_callback(f"Saving orders to database...")
-                inserted, skipped = save_character_order_history(character_id, orders)
-                total_inserted += inserted
-                total_skipped += skipped
-
-                log_callback(f"Page {page}: Inserted {inserted} new orders, skipped {skipped} duplicates")
-
-                if not has_more:
-                    log_callback("All pages fetched")
-                    break
-
-                page += 1
-
-            log_callback("=" * 50)
-            log_callback(f"Import completed!")
-            log_callback(f"Total orders fetched: {total_orders}")
-            log_callback(f"New orders inserted: {total_inserted}")
-            log_callback(f"Duplicates skipped: {total_skipped}")
-
-            # Process orders to calculate profits
-            if total_inserted > 0:
-                log_callback("")
-                log_callback("Processing orders to calculate profits...")
-
-                broker_fee_buy = float(self.current_character.get('broker_fee_buy', 3.00))
-                broker_fee_sell = float(self.current_character.get('broker_fee_sell', 3.00))
-                sales_tax = float(self.current_character.get('sales_tax', 7.50))
-
-                stats = process_character_orders(
-                    character_id,
-                    broker_fee_buy,
-                    broker_fee_sell,
-                    sales_tax
-                )
-
-                if stats:
-                    log_callback("=" * 50)
-                    log_callback("Profit calculation completed!")
-                    log_callback(f"Buy orders processed: {stats['buy_orders_processed']}")
-                    log_callback(f"Items added to inventory: {stats['items_added_to_inventory']}")
-                    log_callback(f"Sell orders processed: {stats['sell_orders_processed']}")
-                    log_callback(f"Items sold: {stats['items_sold']}")
-                    if stats['items_sold_without_purchase'] > 0:
-                        log_callback(f"Items sold without purchase record: {stats['items_sold_without_purchase']} (profit = 0)")
+                if is_first_import:
+                    all_new.extend(transactions)
+                    log(f"Fetched {len(transactions)} transactions (total so far: {len(all_new)})")
                 else:
-                    log_callback("ERROR: Failed to process orders")
+                    # Incremental: keep only transactions newer than max_known_id
+                    new_in_page = [t for t in transactions if t['transaction_id'] > max_known_id]
+                    all_new.extend(new_in_page)
+                    log(f"Fetched {len(transactions)} from ESI, {len(new_in_page)} are new")
+
+                    if len(new_in_page) < len(transactions):
+                        # Hit already-known territory — stop
+                        break
+
+                # If fewer than a full page — this was the last page
+                if len(transactions) < ESI_PAGE_SIZE:
+                    break
+
+                # Pagination: request older transactions
+                from_id = min(t['transaction_id'] for t in transactions)
+
+            if all_new:
+                log(f"Saving {len(all_new)} new transactions to database...")
+                inserted, skipped = save_wallet_transactions(character_id, all_new)
+                log(f"Saved: {inserted} new, {skipped} duplicates skipped")
+            else:
+                log("No new transactions to save.")
+
+            # On first import — rebuild profit from scratch
+            if is_first_import and all_new:
+                log("")
+                log("First import: rebuilding profit data from all wallet transactions...")
+                log("Clearing existing inventory and profit tables...")
+                clear_character_profit_data(character_id)
+
+            # Process unprocessed transactions into profit tables
+            broker_fee_buy = float(self.current_character.get('broker_fee_buy', 3.00))
+            broker_fee_sell = float(self.current_character.get('broker_fee_sell', 3.00))
+            sales_tax = float(self.current_character.get('sales_tax', 7.50))
+
+            log("Processing transactions (FIFO profit calculation)...")
+            stats = process_wallet_transactions(character_id, broker_fee_buy, broker_fee_sell, sales_tax)
+
+            if stats:
+                log("=" * 50)
+                log("Processing complete!")
+                log(f"Buy transactions processed: {stats['buy_transactions_processed']}")
+                log(f"Sell transactions processed: {stats['sell_transactions_processed']}")
+                log(f"Items added to inventory: {stats['items_added_to_inventory']}")
+                log(f"Items sold: {stats['items_sold']}")
+                if stats['items_sold_without_purchase'] > 0:
+                    log(f"Items sold without purchase record: {stats['items_sold_without_purchase']} (profit = 0)")
+            else:
+                log("ERROR: Failed to process transactions.")
 
         except Exception as e:
-            log_callback(f"ERROR: {str(e)}")
+            log(f"ERROR: {str(e)}")
             import traceback
-            log_callback(traceback.format_exc())
+            log(traceback.format_exc())
 
         finally:
-            # Re-enable button
-            async def update_ui():
-                self.update_orders_button.disabled = False
+            async def _reenable():
+                self.update_wallet_button.disabled = False
                 self.page.update()
-            self.page.run_task(update_ui)
+            self.page.run_task(_reenable)
+
+    def _load_transactions_tab(self):
+        """Load and render recent wallet transactions into the Transactions tab"""
+        if not self.current_character:
+            return
+
+        self.transactions_progress.visible = True
+        self.page.update()
+
+        def _fetch():
+            character_id = self.current_character['character_id']
+            rows = get_wallet_transactions(character_id, limit=200)
+
+            async def _render():
+                self.transactions_column.controls.clear()
+
+                for i, row in enumerate(rows):
+                    # Format date: "2026-03-13T21:33:00Z" → "2026-03-13 21:33"
+                    raw_date = row['date']
+                    try:
+                        dt = datetime.fromisoformat(raw_date.replace('Z', '+00:00'))
+                        date_str = dt.strftime('%Y-%m-%d %H:%M')
+                    except Exception:
+                        date_str = raw_date[:16]
+
+                    is_buy = bool(row['is_buy'])
+                    bs_text = ft.Text(
+                        "B" if is_buy else "S",
+                        size=12,
+                        color=ft.Colors.GREEN if is_buy else ft.Colors.RED,
+                        weight=ft.FontWeight.BOLD,
+                        width=35,
+                    )
+                    total_isk = row['total_isk']
+                    unit_price = row['unit_price']
+
+                    self.transactions_column.controls.append(
+                        ft.Container(
+                            content=ft.Row([
+                                ft.Text(date_str, size=11, width=155),
+                                ft.Text(row['type_name'], size=11, expand=True),
+                                bs_text,
+                                ft.Text(f"{row['quantity']:,}", size=11, width=65, text_align=ft.TextAlign.RIGHT),
+                                ft.Text(f"{unit_price:,.2f}", size=11, width=110, text_align=ft.TextAlign.RIGHT),
+                                ft.Text(f"{total_isk:,.2f}", size=11, width=130, text_align=ft.TextAlign.RIGHT),
+                            ]),
+                            bgcolor=ft.Colors.GREY_100 if i % 2 == 0 else ft.Colors.WHITE,
+                            padding=ft.Padding(8, 4, 8, 4),
+                        )
+                    )
+
+                self.transactions_progress.visible = False
+                self.page.update()
+
+            self.page.run_task(_render)
+
+        Thread(target=_fetch, daemon=True).start()
 
     def switch_tab(self, tab_name):
         """Switch between tabs"""
@@ -649,7 +754,8 @@ class CharacterScreen:
             "orders": self.orders_tab_button,
             "months": self.months_tab_button,
             "days": self.days_tab_button,
-            "items": self.items_tab_button
+            "items": self.items_tab_button,
+            "transactions": self.transactions_tab_button,
         }
 
         for name, tab in tabs.items():
@@ -661,16 +767,13 @@ class CharacterScreen:
                 tab.content.weight = ft.FontWeight.NORMAL
 
         # Show/hide content based on tab
-        if tab_name == "orders":
-            self.orders_import_content.visible = True
-            self.profit_reports_content.visible = False
-        else:
-            # All profit tabs use the same content container
-            self.orders_import_content.visible = False
-            self.profit_reports_content.visible = True
+        self.orders_import_content.visible = tab_name == "orders"
+        self.profit_reports_content.visible = tab_name in ("months", "days", "items")
+        self.transactions_content.visible = tab_name == "transactions"
+
+        if tab_name in ("months", "days", "items"):
             self.report_type = tab_name
 
-            # Show/hide date pickers and generate button based on report type
             if tab_name == "months":
                 self.date_from_picker.visible = False
                 self.date_to_picker.visible = False
@@ -680,8 +783,10 @@ class CharacterScreen:
                 self.date_to_picker.visible = True
                 self.generate_report_button.visible = True
 
-            # Auto-generate report for all profit tabs
             self._load_profit_report()
+
+        elif tab_name == "transactions":
+            self._load_transactions_tab()
 
         self.page.update()
 

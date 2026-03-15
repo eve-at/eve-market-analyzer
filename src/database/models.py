@@ -699,18 +699,18 @@ def get_profit_by_items(character_id, date_from, date_to):
 
 
 def get_last_buy_price(character_id, type_id):
-    """Get last buy order price for a specific item type"""
+    """Get last buy transaction price for a specific item type from wallet transactions"""
     try:
         conn = _get_connection()
         cursor = conn.cursor()
 
-        table_name = f"character_history_{character_id}"
+        table_name = f"character_wallet_transactions_{character_id}"
 
         cursor.execute(f"""
-            SELECT price
+            SELECT unit_price
             FROM [{table_name}]
-            WHERE type_id = ? AND is_buy_order = 1
-            ORDER BY issued DESC
+            WHERE type_id = ? AND is_buy = 1
+            ORDER BY date DESC
             LIMIT 1
         """, (type_id,))
 
@@ -723,5 +723,347 @@ def get_last_buy_price(character_id, type_id):
     except Exception as e:
         print(f"Error while getting last buy price: {e}")
         return None
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Wallet transactions
+# ---------------------------------------------------------------------------
+
+def create_character_wallet_transactions_table(character_id):
+    """Create wallet transactions table for a character if it doesn't exist"""
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+
+        table_name = f"character_wallet_transactions_{character_id}"
+
+        cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS [{table_name}] (
+                transaction_id INTEGER PRIMARY KEY,
+                date TEXT NOT NULL,
+                is_buy INTEGER NOT NULL,
+                quantity INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                type_id INTEGER NOT NULL,
+                location_id INTEGER NOT NULL,
+                client_id INTEGER,
+                journal_ref_id INTEGER,
+                is_personal INTEGER DEFAULT 1,
+                processed INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS [idx_{table_name}_date]
+            ON [{table_name}] (date)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS [idx_{table_name}_type_id]
+            ON [{table_name}] (type_id)
+        """)
+        cursor.execute(f"""
+            CREATE INDEX IF NOT EXISTS [idx_{table_name}_processed]
+            ON [{table_name}] (processed)
+        """)
+
+        conn.commit()
+        print(f"Table '{table_name}' created or already exists")
+
+    except Exception as e:
+        print(f"Error creating wallet transactions table: {e}")
+    finally:
+        conn.close()
+
+
+def save_wallet_transactions(character_id, transactions):
+    """Save wallet transactions to database
+
+    Returns:
+        tuple: (inserted_count, skipped_count)
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+
+        table_name = f"character_wallet_transactions_{character_id}"
+        inserted = 0
+        skipped = 0
+
+        for txn in transactions:
+            try:
+                cursor.execute(f"""
+                    INSERT OR IGNORE INTO [{table_name}]
+                    (transaction_id, date, is_buy, quantity, unit_price,
+                     type_id, location_id, client_id, journal_ref_id, is_personal)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    txn['transaction_id'],
+                    txn['date'],
+                    1 if txn.get('is_buy', False) else 0,
+                    txn['quantity'],
+                    txn['unit_price'],
+                    txn['type_id'],
+                    txn['location_id'],
+                    txn.get('client_id'),
+                    txn.get('journal_ref_id'),
+                    1 if txn.get('is_personal', True) else 0,
+                ))
+                if cursor.rowcount > 0:
+                    inserted += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                print(f"Error inserting transaction {txn.get('transaction_id')}: {e}")
+                skipped += 1
+
+        conn.commit()
+        return (inserted, skipped)
+
+    except Exception as e:
+        print(f"Error saving wallet transactions: {e}")
+        return (0, 0)
+    finally:
+        conn.close()
+
+
+def get_max_wallet_transaction_id(character_id):
+    """Return the highest transaction_id stored, or None if table is empty"""
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        table_name = f"character_wallet_transactions_{character_id}"
+        cursor.execute(f"SELECT MAX(transaction_id) FROM [{table_name}]")
+        result = cursor.fetchone()
+        return result[0] if result and result[0] is not None else None
+    except Exception as e:
+        print(f"Error getting max wallet transaction id: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_min_wallet_transaction_id(character_id):
+    """Return the lowest transaction_id stored, or None if table is empty"""
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        table_name = f"character_wallet_transactions_{character_id}"
+        cursor.execute(f"SELECT MIN(transaction_id) FROM [{table_name}]")
+        result = cursor.fetchone()
+        return result[0] if result and result[0] is not None else None
+    except Exception as e:
+        print(f"Error getting min wallet transaction id: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def clear_character_profit_data(character_id):
+    """Clear inventory and profit tables so they can be rebuilt from wallet transactions"""
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"DELETE FROM [character_inventory_{character_id}]")
+        cursor.execute(f"DELETE FROM [character_profit_{character_id}]")
+        conn.commit()
+    except Exception as e:
+        print(f"Error clearing profit data: {e}")
+    finally:
+        conn.close()
+
+
+def process_wallet_transactions(character_id, broker_fee_buy_rate, broker_fee_sell_rate, sales_tax_rate):
+    """Process wallet transactions using FIFO to rebuild inventory and profit tables.
+
+    Clears existing inventory + profit data first, then rebuilds from all transactions
+    ordered chronologically.
+
+    Returns:
+        dict with stats, or None on error
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+
+        txn_table = f"character_wallet_transactions_{character_id}"
+        inventory_table = f"character_inventory_{character_id}"
+        profit_table = f"character_profit_{character_id}"
+
+        stats = {
+            'buy_transactions_processed': 0,
+            'sell_transactions_processed': 0,
+            'items_added_to_inventory': 0,
+            'items_sold': 0,
+            'items_sold_without_purchase': 0,
+        }
+
+        # Process all unprocessed transactions in chronological order
+        cursor.execute(f"""
+            SELECT * FROM [{txn_table}]
+            WHERE processed = 0
+            ORDER BY date ASC, transaction_id ASC
+        """)
+        transactions = [dict(row) for row in cursor.fetchall()]
+
+        for txn in transactions:
+            if txn['is_buy']:
+                # BUY: add to inventory
+                broker_fee = float(txn['unit_price']) * txn['quantity'] * (broker_fee_buy_rate / 100.0)
+                cursor.execute(f"""
+                    INSERT INTO [{inventory_table}]
+                    (type_id, quantity, purchase_price, purchase_order_id, purchase_date, broker_fee_buy)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    txn['type_id'],
+                    txn['quantity'],
+                    txn['unit_price'],
+                    txn['transaction_id'],
+                    txn['date'],
+                    broker_fee,
+                ))
+                stats['items_added_to_inventory'] += txn['quantity']
+                stats['buy_transactions_processed'] += 1
+
+            else:
+                # SELL: FIFO match from inventory
+                remaining = txn['quantity']
+
+                if remaining > 0:
+                    cursor.execute(f"""
+                        SELECT * FROM [{inventory_table}]
+                        WHERE type_id = ?
+                        ORDER BY purchase_date ASC, id ASC
+                    """, (txn['type_id'],))
+                    inventory_items = [dict(row) for row in cursor.fetchall()]
+
+                    for inv in inventory_items:
+                        if remaining <= 0:
+                            break
+
+                        qty = min(remaining, inv['quantity'])
+
+                        cost_base = float(inv['purchase_price']) * qty
+                        cost_broker_buy = float(inv['broker_fee_buy']) * (qty / inv['quantity'])
+                        cost_total = cost_base + cost_broker_buy
+
+                        revenue_base = float(txn['unit_price']) * qty
+                        cost_broker_sell = revenue_base * (broker_fee_sell_rate / 100.0)
+                        cost_sales_tax = revenue_base * (sales_tax_rate / 100.0)
+                        revenue_net = revenue_base - cost_broker_sell - cost_sales_tax
+
+                        gross_profit = revenue_base - cost_base
+                        net_profit = revenue_net - cost_total
+
+                        cursor.execute(f"""
+                            INSERT INTO [{profit_table}]
+                            (type_id, sell_order_id, sell_date, quantity, purchase_price, sell_price,
+                             broker_fee_buy, broker_fee_sell, sales_tax, gross_profit, net_profit, purchase_order_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            txn['type_id'],
+                            txn['transaction_id'],
+                            txn['date'],
+                            qty,
+                            inv['purchase_price'],
+                            txn['unit_price'],
+                            cost_broker_buy,
+                            cost_broker_sell,
+                            cost_sales_tax,
+                            gross_profit,
+                            net_profit,
+                            inv['purchase_order_id'],
+                        ))
+
+                        new_qty = inv['quantity'] - qty
+                        if new_qty > 0:
+                            cursor.execute(f"UPDATE [{inventory_table}] SET quantity = ? WHERE id = ?",
+                                           (new_qty, inv['id']))
+                        else:
+                            cursor.execute(f"DELETE FROM [{inventory_table}] WHERE id = ?", (inv['id'],))
+
+                        remaining -= qty
+                        stats['items_sold'] += qty
+
+                    if remaining > 0:
+                        # Sold without purchase record
+                        revenue_base = float(txn['unit_price']) * remaining
+                        cost_broker_sell = revenue_base * (broker_fee_sell_rate / 100.0)
+                        cost_sales_tax = revenue_base * (sales_tax_rate / 100.0)
+                        cursor.execute(f"""
+                            INSERT INTO [{profit_table}]
+                            (type_id, sell_order_id, sell_date, quantity, purchase_price, sell_price,
+                             broker_fee_buy, broker_fee_sell, sales_tax, gross_profit, net_profit, purchase_order_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            txn['type_id'],
+                            txn['transaction_id'],
+                            txn['date'],
+                            remaining,
+                            0,
+                            txn['unit_price'],
+                            0,
+                            cost_broker_sell,
+                            cost_sales_tax,
+                            0,
+                            0,
+                            None,
+                        ))
+                        stats['items_sold_without_purchase'] += remaining
+
+                stats['sell_transactions_processed'] += 1
+
+            # Mark as processed
+            cursor.execute(f"UPDATE [{txn_table}] SET processed = 1 WHERE transaction_id = ?",
+                           (txn['transaction_id'],))
+
+        conn.commit()
+        return stats
+
+    except Exception as e:
+        print(f"Error processing wallet transactions: {e}")
+        if conn:
+            conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+
+def get_wallet_transactions(character_id, limit=200):
+    """Return recent wallet transactions joined with item names for display
+
+    Returns:
+        list of dicts with keys: transaction_id, date, is_buy, quantity,
+        unit_price, total_isk, type_id, type_name
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+
+        txn_table = f"character_wallet_transactions_{character_id}"
+
+        cursor.execute(f"""
+            SELECT
+                t.transaction_id,
+                t.date,
+                t.is_buy,
+                t.quantity,
+                t.unit_price,
+                t.quantity * t.unit_price AS total_isk,
+                t.type_id,
+                COALESCE(i.typeName, CAST(t.type_id AS TEXT)) AS type_name
+            FROM [{txn_table}] t
+            LEFT JOIN types i ON i.typeID = t.type_id
+            ORDER BY t.date DESC, t.transaction_id DESC
+            LIMIT ?
+        """, (limit,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    except Exception as e:
+        print(f"Error fetching wallet transactions for display: {e}")
+        return []
     finally:
         conn.close()

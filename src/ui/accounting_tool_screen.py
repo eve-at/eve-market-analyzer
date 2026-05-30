@@ -1,5 +1,7 @@
 """Accounting Tool screen UI component"""
 import flet as ft
+import threading
+import requests
 from pathlib import Path
 from watchdog.observers import Observer
 from src.handlers.export_file_handler import ExportFileHandler
@@ -10,6 +12,23 @@ from src.utils.price_calculator import (
     round_to_valid_price, adjust_price_by_scroll
 )
 from src.database.models import get_current_character_id, get_character, get_last_buy_price
+
+_THE_FORGE_REGION_ID = 10000002
+
+
+def _fetch_avg_daily_qty_esi(type_id, days=14, region_id=_THE_FORGE_REGION_ID):
+    """Return avg daily volume over last `days` days from ESI history. Public endpoint."""
+    try:
+        url = f"https://esi.evetech.net/latest/markets/{region_id}/history/"
+        resp = requests.get(url, params={'type_id': type_id, 'datasource': 'tranquility'}, timeout=10)
+        if resp.status_code == 200:
+            history = resp.json()
+            last_n = history[-days:] if len(history) >= days else history
+            if last_n:
+                return round(sum(d.get('volume', 0) for d in last_n) / days)
+        return None
+    except Exception:
+        return None
 
 
 class AccountingToolScreen:
@@ -130,6 +149,14 @@ class AccountingToolScreen:
             weight=ft.FontWeight.W_500
         )
 
+        # Avg daily quantity
+        self.avg_daily_qty_text = ft.Text(
+            "Avg. Daily Qty (14d): -",
+            size=14,
+            weight=ft.FontWeight.W_500,
+            color=ft.Colors.BLUE_600
+        )
+
         # Profit display (spread-based)
         self.profit_percent_text = ft.Text(
             "-%",
@@ -219,38 +246,46 @@ class AccountingToolScreen:
                 self.price_to_copy_radio,
                 ft.Container(height=15),
 
-                # Profit Analysis and Competitors side by side
+                # Row 1: Profit Analysis | Competitors
                 ft.Row([
-                    # Left column - Profit Analysis
                     ft.Column([
                         ft.Text("Profit Analysis (Spread):", size=14, weight=ft.FontWeight.W_500),
                         self.profit_percent_text,
                         self.profit_isk_text,
                     ], spacing=5, expand=True),
-
-                    # Right column - Competitors
                     ft.Column([
                         ft.Text("Competitors:", size=14, weight=ft.FontWeight.W_500),
                         self.competitors_sell_text,
-                        self.competitors_buy_text
+                        self.competitors_buy_text,
                     ], spacing=5, expand=True)
-                ], spacing=20),
+                ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=10),
 
-                # Last buy price and profit from it
-                self.last_buy_price_text,
-                ft.Text("Profit from Last Buy:", size=14, weight=ft.FontWeight.W_500),
-                self.profit_from_buy_percent_text,
-                self.profit_from_buy_isk_text,
+                # Row 2: Last Buy Price | Avg. Daily Qty
+                ft.Row([
+                    ft.Column([
+                        self.last_buy_price_text,
+                    ], spacing=5, expand=True),
+                    ft.Column([
+                        self.avg_daily_qty_text,
+                    ], spacing=5, expand=True)
+                ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=10),
 
-                # Fees breakdown (with percentages integrated)
-                ft.Text("Fees Breakdown:", size=12, weight=ft.FontWeight.W_500),
-                ft.Column([
-                    self.broker_fee_sell_isk_text,
-                    self.broker_fee_buy_isk_text,
-                    self.sales_tax_isk_text
-                ], spacing=2),
+                # Row 3: Profit from Last Buy | Fees Breakdown
+                ft.Row([
+                    ft.Column([
+                        ft.Text("Profit from Last Buy:", size=14, weight=ft.FontWeight.W_500),
+                        self.profit_from_buy_percent_text,
+                        self.profit_from_buy_isk_text,
+                    ], spacing=5, expand=True),
+                    ft.Column([
+                        ft.Text("Fees Breakdown:", size=12, weight=ft.FontWeight.W_500),
+                        self.broker_fee_buy_isk_text,
+                        self.broker_fee_sell_isk_text,
+                        self.sales_tax_isk_text,
+                    ], spacing=5, expand=True)
+                ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=15)
 
             ], spacing=5, scroll=ft.ScrollMode.AUTO),
@@ -278,7 +313,7 @@ class AccountingToolScreen:
                 print(f"Copied Max. Buy Price to clipboard: {price_str}")
             self.page.run_task(copy_async)
 
-    def on_price_type_changed(self, e):
+    def on_price_type_changed(self, _):
         """Handle price type radio change"""
         # Capture current value to avoid race condition
         current_price_type = self.price_to_copy_radio.value
@@ -432,7 +467,7 @@ class AccountingToolScreen:
         # Recalculate profit
         self.update_calculations()
 
-    def on_export_file_created(self, file_path, region_name, item_name):
+    def on_export_file_created(self, file_path, _, item_name):
         """Callback when new export file is detected"""
         print(f"Processing export file: {file_path}")
 
@@ -455,8 +490,31 @@ class AccountingToolScreen:
 
             self.page.run_task(update_ui)
 
+            # Fetch avg daily qty in background
+            if self.current_type_id:
+                self._start_fetch_avg_daily_qty(self.current_type_id)
+
         except Exception as e:
             print(f"Error processing export file: {e}")
+
+    def _start_fetch_avg_daily_qty(self, type_id):
+        """Kick off background ESI fetch of avg daily qty and update display when done."""
+        self.avg_daily_qty_text.value = "Avg. Daily Qty (14d): loading..."
+        self.page.update()
+
+        def do_fetch():
+            avg = _fetch_avg_daily_qty_esi(type_id)
+
+            async def update():
+                if avg is not None:
+                    self.avg_daily_qty_text.value = f"Avg. Daily Qty (14d): {avg:,}"
+                else:
+                    self.avg_daily_qty_text.value = "Avg. Daily Qty (14d): N/A"
+                self.page.update()
+
+            self.page.run_task(update)
+
+        threading.Thread(target=do_fetch, daemon=True).start()
 
     async def update_ui_with_data(self):
         """Update UI elements with current data"""

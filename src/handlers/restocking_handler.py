@@ -26,10 +26,6 @@ def _get_connection():
 def load_active_order_type_ids(character, callback=None):
     """Refresh token if needed, fetch active character orders and return set of type_ids.
 
-    Args:
-        character: dict with character data (character_id, access_token, refresh_token, token_expiry)
-        callback: optional log callback
-
     Returns:
         (set_of_type_ids, updated_character) or (None, character) on error
     """
@@ -44,7 +40,6 @@ def load_active_order_type_ids(character, callback=None):
 
     esi = ESIAPI()
 
-    # Refresh token if needed
     if token_expiry and isinstance(token_expiry, str):
         try:
             token_expiry = datetime.fromisoformat(token_expiry)
@@ -85,12 +80,7 @@ def load_active_order_type_ids(character, callback=None):
 def get_restocking_items(character_id, active_type_ids):
     """Return items from profit history that are NOT in active orders.
 
-    Aggregates quantity sold and filters out type_ids currently in active orders.
-    Only includes items that have net profit > 0 in total.
-
-    Args:
-        character_id: int
-        active_type_ids: set of type_id ints currently in character's active orders
+    Only includes items with net_profit > 0 in total.
 
     Returns:
         list of dicts: [{'type_id', 'type_name', 'qty_sold'}, ...]
@@ -135,82 +125,8 @@ def get_restocking_items(character_id, active_type_ids):
             conn.close()
 
 
-def get_prices_for_items(region_id, type_ids, callback=None):
-    """Get best buy/sell prices for items from the region orders table.
-
-    Args:
-        region_id: int
-        type_ids: iterable of type_id ints
-        callback: optional log callback
-
-    Returns:
-        dict: {type_id: {'buy_price': float|None, 'sell_price': float|None}}
-        Returns empty dict if orders table is missing.
-    """
-    def log(msg):
-        if callback:
-            callback(msg)
-
-    if not type_ids:
-        return {}
-
-    conn = None
-    try:
-        conn = _get_connection()
-        cursor = conn.cursor()
-
-        table_name = f"orders_{region_id}"
-
-        cursor.execute("""
-            SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?
-        """, (table_name,))
-        if cursor.fetchone()[0] == 0:
-            log(f"Orders table for region {region_id} not found. Please click 'Update Orders' first.")
-            return {}
-
-        # Fetch all needed prices in one query
-        placeholders = ','.join('?' * len(type_ids))
-        cursor.execute(f"""
-            SELECT
-                type_id,
-                MAX(CASE WHEN is_buy_order = 1 THEN price END) AS buy_price,
-                MIN(CASE WHEN is_buy_order = 0 THEN price END) AS sell_price
-            FROM [{table_name}]
-            WHERE type_id IN ({placeholders})
-            GROUP BY type_id
-        """, list(type_ids))
-
-        prices = {}
-        for row in cursor.fetchall():
-            prices[row['type_id']] = {
-                'buy_price': row['buy_price'],
-                'sell_price': row['sell_price'],
-            }
-
-        # Fill missing type_ids with None
-        for tid in type_ids:
-            if tid not in prices:
-                prices[tid] = {'buy_price': None, 'sell_price': None}
-
-        return prices
-
-    except Exception as e:
-        log(f"Error getting prices: {e}")
-        return {}
-    finally:
-        if conn:
-            conn.close()
-
-
 def calculate_profit(buy_price, sell_price, broker_fee_buy, broker_fee_sell, sales_tax):
     """Calculate taxes and net profit per unit.
-
-    Args:
-        buy_price: float — price paid for the item (max buy order)
-        sell_price: float — price received (min sell order)
-        broker_fee_buy: float — broker fee % for buy order (e.g. 3.0)
-        broker_fee_sell: float — broker fee % for sell order (e.g. 3.0)
-        sales_tax: float — sales tax % (e.g. 7.5)
 
     Returns:
         dict: {'taxes': float, 'profit_isk': float, 'profit_pct': float}

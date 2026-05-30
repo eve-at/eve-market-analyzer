@@ -1,15 +1,18 @@
-"""Restocking List screen — items previously traded but not in current active orders"""
+"""Restocking List screen - items previously traded but not in current active orders"""
 import flet as ft
 import threading
-from .autocomplete_field import AutoCompleteField
-from src.database.models import get_current_character_id, get_character
+from datetime import datetime
+from pathlib import Path
+from watchdog.observers import Observer
+from src.database.models import get_current_character_id, get_character, get_setting, save_character
+from src.auth.esi_api import ESIAPI
 from src.handlers.restocking_handler import (
     load_active_order_type_ids,
     get_restocking_items,
-    get_prices_for_items,
     calculate_profit,
 )
-from src.handlers.trade_opportunities_handler import check_orders_count, update_orders
+from src.handlers.export_file_handler import ExportFileHandler
+from src.utils.export_parser import parse_export_file
 
 
 class RestockingScreen:
@@ -21,109 +24,66 @@ class RestockingScreen:
         self.on_back_callback = on_back_callback
 
         self.current_character = None
-        self.items_data = []          # list of dicts: type_id, type_name, qty_sold, + price fields
-        self.sort_column_index = 2    # default sort by qty_sold (index 2)
+        self.items_data = []
+        self.sort_column_index = 2    # default: qty_sold
         self.sort_ascending = False
         self.current_page = 0
         self.rows_per_page = 50
         self.clicked_rows = set()
 
-        self.selected_region_id = None
-        self.selected_region_name = None
+        # Per-item price freshness {type_id: datetime}
+        self.price_updated_at = {}
+
+        # File monitoring
+        self.observer = None
 
         # Load character
         character_id = get_current_character_id()
         if character_id:
             self.current_character = get_character(character_id)
 
-        # ── Region selector ──────────────────────────────────────────────
-        self.region_field = AutoCompleteField(
-            label="Region (for price lookup)",
-            hint_text="Start typing region name...",
-            default_value="",
-            data_dict=self.regions_data,
-            on_select_callback=self.on_region_selected,
-            on_validation_change=None,
+        # ── Status text ───────────────────────────────────────────────────
+        self.status_text = ft.Text(
+            "Loading active orders...", size=12, color=ft.Colors.BLUE
         )
 
-        # ── Buttons ──────────────────────────────────────────────────────
-        self.update_orders_button = ft.ElevatedButton(
-            "Update Orders",
-            on_click=self.on_update_orders,
-            disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE,
-                color=ft.Colors.WHITE,
-                padding=ft.Padding(20, 10, 20, 10),
-            ),
-        )
-
-        self.update_prices_button = ft.ElevatedButton(
-            "Update Prices",
-            on_click=self.on_update_prices,
-            disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.GREEN,
-                color=ft.Colors.WHITE,
-                padding=ft.Padding(20, 10, 20, 10),
-            ),
-        )
-
-        # ── Status text ──────────────────────────────────────────────────
-        self.status_text = ft.Text("Loading active orders...", size=12, color=ft.Colors.BLUE)
-
-        self.orders_status_text = ft.Text("", size=12, color=ft.Colors.GREY_600)
-
-        # ── Log container (for update-orders progress) ───────────────────
-        self.log_column = ft.Column(
-            scroll=ft.ScrollMode.AUTO,
-            auto_scroll=True,
-            spacing=2,
-        )
-        self.log_container = ft.Container(
-            content=self.log_column,
-            border=ft.border.all(1, ft.Colors.GREY_400),
-            border_radius=5,
-            padding=8,
-            bgcolor=ft.Colors.BLACK,
-            height=180,
-            width=700,
+        # ── Hint (shown after table loads) ───────────────────────────────
+        self.hint_container = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.LIGHTBULB_OUTLINE, size=13, color=ft.Colors.BLUE_300),
+                ft.Text(
+                    "Click an item name to open its market window in EVE, "
+                    "then use 'Export to File' - the price will update here automatically. "
+                    "Requires login.",
+                    size=11,
+                    color=ft.Colors.GREY_600,
+                    expand=True,
+                ),
+            ], spacing=6),
             visible=False,
+            padding=ft.padding.only(top=3, bottom=1),
         )
 
-        # ── Loader (shown on initial page load) ──────────────────────────
+        # ── Loader ───────────────────────────────────────────────────────
         self.loader_container = ft.Container(
             content=ft.Column([
                 ft.ProgressRing(width=40, height=40),
                 ft.Container(height=10),
-                ft.Text("Refreshing active character orders...", size=13, color=ft.Colors.GREY_600),
+                ft.Text(
+                    "Refreshing active character orders...",
+                    size=13,
+                    color=ft.Colors.GREY_600,
+                ),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=40,
             visible=True,
         )
 
-        # ── Results table container ───────────────────────────────────────
+        # ── Results table ─────────────────────────────────────────────────
         self.results_container = ft.Container(
-            content=ft.Text(
-                "Loading…",
-                size=14,
-                color=ft.Colors.GREY_600,
-                text_align=ft.TextAlign.CENTER,
-            ),
-            padding=20,
+            content=ft.Text("Loading…", size=14, color=ft.Colors.GREY_600),
+            padding=ft.padding.only(top=0, left=0, right=4, bottom=4),
             expand=True,
-            visible=False,
-        )
-
-        # ── Price controls row (shown after initial load) ─────────────────
-        self.price_controls_row = ft.Row(
-            [
-                self.region_field.container,
-                self.update_orders_button,
-                self.update_prices_button,
-            ],
-            spacing=10,
-            vertical_alignment=ft.MainAxisAlignment.START,
             visible=False,
         )
 
@@ -139,17 +99,12 @@ class RestockingScreen:
                 ),
                 ft.Container(height=8),
                 self.status_text,
-                ft.Container(height=4),
-                self.price_controls_row,
-                ft.Container(height=2),
-                self.orders_status_text,
-                ft.Container(height=4),
-                self.log_container,
+                self.hint_container,
                 ft.Divider(),
                 self.loader_container,
                 self.results_container,
             ], spacing=0),
-            padding=5,
+            padding=ft.padding.only(top=5, left=0, right=5, bottom=5),
             expand=True,
         )
 
@@ -158,20 +113,11 @@ class RestockingScreen:
     # ─────────────────────────────────────────────────────────────────────
 
     def start_auto_load(self):
-        """Called by main.py after the page is rendered — kicks off background load"""
+        """Called by main.py after the page is rendered."""
         thread = threading.Thread(target=self._auto_load_thread, daemon=True)
         thread.start()
 
     def _auto_load_thread(self):
-        """Background: refresh active orders then build the items list"""
-        def log(msg):
-            async def _add():
-                self.log_column.controls.append(
-                    ft.Text(msg, size=11, color=ft.Colors.GREEN_300, font_family="Consolas", selectable=True)
-                )
-                self.page.update()
-            self.page.run_task(_add)
-
         if not self.current_character:
             async def _no_char():
                 self.loader_container.visible = False
@@ -179,19 +125,14 @@ class RestockingScreen:
                 self.status_text.color = ft.Colors.ORANGE
                 self.results_container.content = ft.Text(
                     "No character logged in. Go to EVE Online Account to log in.",
-                    size=14,
-                    color=ft.Colors.ORANGE,
-                    text_align=ft.TextAlign.CENTER,
+                    size=14, color=ft.Colors.ORANGE, text_align=ft.TextAlign.CENTER,
                 )
                 self.results_container.visible = True
                 self.page.update()
             self.page.run_task(_no_char)
             return
 
-        # Fetch active orders (with token refresh if needed)
-        active_type_ids, updated_char = load_active_order_type_ids(
-            self.current_character, callback=log
-        )
+        active_type_ids, updated_char = load_active_order_type_ids(self.current_character)
         if updated_char:
             self.current_character = updated_char
 
@@ -202,201 +143,155 @@ class RestockingScreen:
                 self.status_text.color = ft.Colors.RED
                 self.results_container.content = ft.Text(
                     "Could not load active orders from ESI. Please check your login.",
-                    size=14,
-                    color=ft.Colors.RED,
-                    text_align=ft.TextAlign.CENTER,
+                    size=14, color=ft.Colors.RED, text_align=ft.TextAlign.CENTER,
                 )
                 self.results_container.visible = True
                 self.page.update()
             self.page.run_task(_err)
             return
 
-        # Query DB for restocking items
         items = get_restocking_items(self.current_character['character_id'], active_type_ids)
 
         async def _done(items=items):
             self.loader_container.visible = False
-            self.price_controls_row.visible = True
 
             if not items:
                 self.status_text.value = "No items found to restock."
                 self.status_text.color = ft.Colors.ORANGE
                 self.results_container.content = ft.Text(
-                    "All previously traded items are already in your active orders, or no profit history found.",
-                    size=14,
-                    color=ft.Colors.GREY_600,
-                    text_align=ft.TextAlign.CENTER,
+                    "All previously traded items are already in your active orders, "
+                    "or no profit history found.",
+                    size=14, color=ft.Colors.GREY_600, text_align=ft.TextAlign.CENTER,
                 )
                 self.results_container.visible = True
             else:
-                # Store items (price fields empty initially)
                 self.items_data = [
-                    dict(item, buy_price=None, sell_price=None, taxes=None,
-                         profit_isk=None, profit_pct=None)
+                    dict(item, buy_price=None, sell_price=None,
+                         taxes=None, profit_isk=None, profit_pct=None)
                     for item in items
                 ]
+
                 self.sort_column_index = 2
                 self.sort_ascending = False
                 self.current_page = 0
                 self._sort_data()
-                self.status_text.value = (
-                    f"Found {len(items)} items to restock. Select a region and click 'Update Prices'."
-                )
-                self.status_text.color = ft.Colors.GREEN
                 self._render_table()
+
+                self.status_text.value = f"Found {len(items)} items to restock."
+                self.status_text.color = ft.Colors.GREEN
+                self.hint_container.visible = True
 
             self.page.update()
 
         self.page.run_task(_done)
 
     # ─────────────────────────────────────────────────────────────────────
-    # Region selection
+    # File monitoring (market export files)
     # ─────────────────────────────────────────────────────────────────────
 
-    def on_region_selected(self, name, region_id):
-        self.selected_region_id = region_id
-        self.selected_region_name = name
-        self.update_orders_button.disabled = False
-        self._refresh_orders_status()
-        self.page.update()
+    def start_file_monitoring(self):
+        """Start watchdog observer on the market logs directory."""
+        if self.observer and self.observer.is_alive():
+            self.stop_file_monitoring()
 
-    def _refresh_orders_status(self):
-        if not self.selected_region_id:
-            return
-        count = check_orders_count(self.selected_region_id)
-        if count > 0:
-            self.orders_status_text.value = f"Orders for {self.selected_region_name}: {count:,} records"
-            self.orders_status_text.color = ft.Colors.GREEN
-            self._set_update_prices_enabled(True)
-        else:
-            self.orders_status_text.value = "No orders found for this region. Click 'Update Orders' first."
-            self.orders_status_text.color = ft.Colors.ORANGE
-            self._set_update_prices_enabled(False)
-        self.page.update()
+        try:
+            import settings as _settings
+            import importlib
+            importlib.reload(_settings)
+            marketlogs_dir = get_setting('marketlogs_dir', _settings.MARKETLOGS_DIR)
+            marketlogs_path = Path(marketlogs_dir)
 
-    def _set_update_prices_enabled(self, enabled):
-        self.update_prices_button.disabled = not enabled or not self.items_data
+            if not marketlogs_path.exists():
+                print(f"RestockingScreen: market logs dir not found: {marketlogs_path}")
+                return
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Update Orders
-    # ─────────────────────────────────────────────────────────────────────
+            handler = ExportFileHandler(self.on_export_file_created)
+            self.observer = Observer()
+            self.observer.schedule(handler, str(marketlogs_path), recursive=False)
+            self.observer.start()
+            print(f"RestockingScreen: started file monitoring on {marketlogs_path}")
+        except Exception as e:
+            print(f"RestockingScreen: could not start file monitoring: {e}")
 
-    def log_progress(self, message):
-        async def _add():
-            self.log_column.controls.append(
-                ft.Text(message, size=11, color=ft.Colors.GREEN_300, font_family="Consolas", selectable=True)
-            )
-            self.page.update()
-        self.page.run_task(_add)
+    def stop_file_monitoring(self):
+        """Stop the watchdog observer."""
+        if self.observer:
+            try:
+                self.observer.stop()
+                self.observer.join(timeout=2)
+                print("RestockingScreen: file monitoring stopped")
+            except Exception as e:
+                print(f"RestockingScreen: error stopping observer: {e}")
+            finally:
+                self.observer = None
 
-    def on_update_orders(self, e):
-        if not self.selected_region_id:
-            return
+    def on_export_file_created(self, file_path, region_name, item_name):
+        """Called when EVE exports a market file while this screen is open."""
+        try:
+            data = parse_export_file(file_path)
+            type_id = data.get('type_id')
+            min_sell = data.get('min_sell_price')
+            max_buy = data.get('max_buy_price')
 
-        self.log_column.controls.clear()
-        self.log_container.visible = True
-        self.update_orders_button.disabled = True
-        self.update_prices_button.disabled = True
-        self.orders_status_text.value = f"Updating orders for {self.selected_region_name}..."
-        self.orders_status_text.color = ft.Colors.BLUE
-        self.page.update()
+            if type_id is None:
+                return
 
-        def _thread():
-            success = update_orders(self.selected_region_id, callback=self.log_progress)
+            matched = None
+            for item in self.items_data:
+                if item['type_id'] == type_id:
+                    matched = item
+                    break
 
-            async def _done():
-                self.update_orders_button.disabled = False
-                self.log_container.visible = False
-                if success:
-                    self._refresh_orders_status()
-                else:
-                    self.orders_status_text.value = "Failed to update orders."
-                    self.orders_status_text.color = ft.Colors.RED
-                self.page.update()
-
-            self.page.run_task(_done)
-
-        threading.Thread(target=_thread, daemon=True).start()
-
-    # ─────────────────────────────────────────────────────────────────────
-    # Update Prices
-    # ─────────────────────────────────────────────────────────────────────
-
-    def on_update_prices(self, e):
-        if not self.selected_region_id or not self.items_data:
-            return
-
-        self.update_prices_button.disabled = True
-        self.update_orders_button.disabled = True
-        self.status_text.value = "Fetching prices..."
-        self.status_text.color = ft.Colors.BLUE
-        self.page.update()
-
-        type_ids = [item['type_id'] for item in self.items_data]
-
-        def _thread():
-            prices = get_prices_for_items(
-                self.selected_region_id,
-                type_ids,
-                callback=self.log_progress,
-            )
+            if matched is None:
+                return  # Item not in our restocking list
 
             broker_fee_buy = float(self.current_character.get('broker_fee_buy', 3.0))
             broker_fee_sell = float(self.current_character.get('broker_fee_sell', 3.0))
             sales_tax = float(self.current_character.get('sales_tax', 7.5))
 
-            # Enrich items with price and profit data
-            for item in self.items_data:
-                p = prices.get(item['type_id'], {})
-                buy_price = p.get('buy_price')
-                sell_price = p.get('sell_price')
-                item['buy_price'] = buy_price
-                item['sell_price'] = sell_price
-                if buy_price is not None and sell_price is not None:
-                    calc = calculate_profit(buy_price, sell_price, broker_fee_buy, broker_fee_sell, sales_tax)
-                    item['taxes'] = calc['taxes']
-                    item['profit_isk'] = calc['profit_isk']
-                    item['profit_pct'] = calc['profit_pct']
-                else:
-                    item['taxes'] = None
-                    item['profit_isk'] = None
-                    item['profit_pct'] = None
+            matched['buy_price'] = max_buy
+            matched['sell_price'] = min_sell
+            self.price_updated_at[type_id] = datetime.now()
 
-            async def _done():
-                self.update_prices_button.disabled = False
-                self.update_orders_button.disabled = False
-                self.sort_column_index = 6   # sort by profit % after update
-                self.sort_ascending = False
-                self._sort_data()
-                self._render_table()
-                self.status_text.value = (
-                    f"{len(self.items_data)} items — prices updated from {self.selected_region_name}"
+            if max_buy is not None and min_sell is not None:
+                calc = calculate_profit(
+                    max_buy, min_sell,
+                    broker_fee_buy, broker_fee_sell, sales_tax
                 )
+                matched['taxes'] = calc['taxes']
+                matched['profit_isk'] = calc['profit_isk']
+                matched['profit_pct'] = calc['profit_pct']
+            else:
+                matched['taxes'] = matched['profit_isk'] = matched['profit_pct'] = None
+
+            async def _refresh():
+                self._render_table()
+                self.status_text.value = f"Price updated: {item_name} from {region_name}"
                 self.status_text.color = ft.Colors.GREEN
                 self.page.update()
 
-            self.page.run_task(_done)
+            self.page.run_task(_refresh)
 
-        threading.Thread(target=_thread, daemon=True).start()
+        except Exception as ex:
+            print(f"RestockingScreen: error processing export file: {ex}")
 
     # ─────────────────────────────────────────────────────────────────────
     # Sorting & pagination
     # ─────────────────────────────────────────────────────────────────────
 
     def _sort_key(self, column_index):
-        """Return a sort-key lambda for the given column index"""
-        def _safe_float(v):
+        def _f(v):
             return float(v) if v is not None else -1e18
 
         keys = [
-            lambda x: x['type_id'],                         # 0 Type ID
-            lambda x: x['type_name'].lower(),               # 1 Item
-            lambda x: int(x['qty_sold']),                   # 2 Qty Sold
-            lambda x: _safe_float(x['buy_price']),          # 3 Price Buy
-            lambda x: _safe_float(x['sell_price']),         # 4 Price Sell
-            lambda x: _safe_float(x['taxes']),              # 5 Taxes
-            lambda x: _safe_float(x['profit_pct']),         # 6 Profit %
-            lambda x: _safe_float(x['profit_isk']),         # 7 Profit ISK
+            lambda x: x['type_id'],
+            lambda x: x['type_name'].lower(),
+            lambda x: int(x['qty_sold']),
+            lambda x: _f(x['buy_price']),
+            lambda x: _f(x['sell_price']),
+            lambda x: _f(x['taxes']),
+            lambda x: _f(x['profit_pct']),
+            lambda x: _f(x['profit_isk']),
         ]
         return keys[column_index]
 
@@ -434,18 +329,100 @@ class RestockingScreen:
         self.page.update()
 
     # ─────────────────────────────────────────────────────────────────────
+    # Open item in EVE market window
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _open_in_game(self, type_id):
+        """Open the in-game market window for type_id via ESI. Runs in a background thread."""
+        def _thread():
+            character = self.current_character
+            if not character:
+                self.page.run_task(self._show_snack, "Not logged in", error=True)
+                return
+
+            access_token = character.get('access_token')
+            refresh_token = character.get('refresh_token')
+            token_expiry = character.get('token_expiry')
+
+            if isinstance(token_expiry, str):
+                try:
+                    token_expiry = datetime.fromisoformat(token_expiry)
+                except ValueError:
+                    token_expiry = None
+
+            esi = ESIAPI()
+
+            if not access_token or not token_expiry or datetime.now() >= token_expiry:
+                if not refresh_token:
+                    self.page.run_task(self._show_snack, "Token expired - please log in again", error=True)
+                    return
+                token_data = esi.refresh_access_token(refresh_token)
+                if not token_data:
+                    self.page.run_task(self._show_snack, "Token refresh failed - please log in again", error=True)
+                    return
+                access_token = token_data['access_token']
+                save_character({
+                    'character_id': character['character_id'],
+                    'character_name': character['character_name'],
+                    'access_token': access_token,
+                    'token_expiry': token_data['token_expiry'],
+                })
+                self.current_character = get_character(character['character_id']) or character
+
+            success = esi.open_market_window(type_id, access_token)
+            if success:
+                self.page.run_task(self._show_snack, "Market window opened in EVE")
+            else:
+                self.page.run_task(self._show_snack, "Failed to open market window", error=True)
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    async def _show_snack(self, message, error=False):
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(message, color=ft.Colors.WHITE),
+            bgcolor=ft.Colors.RED_700 if error else ft.Colors.GREEN_700,
+            duration=3000,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+
+    # ─────────────────────────────────────────────────────────────────────
     # Table rendering
     # ─────────────────────────────────────────────────────────────────────
 
     def _fmt_isk(self, value):
-        if value is None:
-            return "—"
-        return f"{value:,.0f}"
+        return f"{value:,.0f}" if value is not None else "-"
 
     def _fmt_pct(self, value):
-        if value is None:
-            return "—"
-        return f"{value:.1f}%"
+        return f"{value:.1f}%" if value is not None else "-"
+
+    def _is_price_stale(self, type_id):
+        """True if the price for this item is present but older than 1 hour."""
+        item = next((i for i in self.items_data if i['type_id'] == type_id), None)
+        if item is None or (item.get('buy_price') is None and item.get('sell_price') is None):
+            return False
+        updated_at = self.price_updated_at.get(type_id)
+        if updated_at is None:
+            return True
+        return (datetime.now() - updated_at).total_seconds() > 3600
+
+    def _price_cell(self, text_value, stale):
+        """DataCell content with optional stale warning icon."""
+        if stale:
+            return ft.Row(
+                [
+                    ft.Text(text_value),
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER,
+                        size=12,
+                        color=ft.Colors.ORANGE,
+                        tooltip="Price data older than 1 hour",
+                    ),
+                ],
+                spacing=3,
+                tight=True,
+            )
+        return ft.Text(text_value)
 
     def _render_table(self):
         if not self.items_data:
@@ -479,13 +456,7 @@ class RestockingScreen:
             type_id = item['type_id']
             type_name = item['type_name']
             is_clicked = type_id in self.clicked_rows
-
-            def _tap(type_id=type_id, type_name=type_name, extra=None):
-                def handler(e):
-                    self.toggle_row_highlight(type_id)
-                    if extra:
-                        extra(e, type_id, type_name)
-                return handler
+            stale = self._is_price_stale(type_id)
 
             profit_pct = item.get('profit_pct')
             if profit_pct is not None and profit_pct > 0:
@@ -495,13 +466,19 @@ class RestockingScreen:
             else:
                 profit_color = None
 
+            def _tap(tid=type_id, tname=type_name, extra=None):
+                def handler(e):
+                    self.toggle_row_highlight(tid)
+                    if extra:
+                        extra(e, tid, tname)
+                return handler
+
             rows.append(
                 ft.DataRow(
                     cells=[
                         ft.DataCell(
                             ft.Text(str(type_id), color=ft.Colors.BLUE),
                             on_tap=_tap(
-                                type_id=type_id, type_name=type_name,
                                 extra=lambda _, tid, tname: self.page.run_task(
                                     self._copy_to_clipboard, str(tid), "Type ID"
                                 )
@@ -510,18 +487,27 @@ class RestockingScreen:
                         ft.DataCell(
                             ft.Text(type_name, color=ft.Colors.BLUE),
                             on_tap=_tap(
-                                type_id=type_id, type_name=type_name,
-                                extra=lambda _, tid, tname: self.page.run_task(
-                                    self._copy_to_clipboard, tname, "Item name"
-                                )
+                                extra=(
+                                    lambda _, tid, tname: self._open_in_game(tid)
+                                    if self.current_character else
+                                    lambda _, tid, tname: self.page.run_task(
+                                        self._copy_to_clipboard, tname, "Item name"
+                                    )
+                                ),
                             ),
                         ),
                         ft.DataCell(ft.Text(f"{item['qty_sold']:,}"), on_tap=_tap()),
-                        ft.DataCell(ft.Text(self._fmt_isk(item.get('buy_price'))), on_tap=_tap()),
-                        ft.DataCell(ft.Text(self._fmt_isk(item.get('sell_price'))), on_tap=_tap()),
+                        ft.DataCell(
+                            self._price_cell(self._fmt_isk(item.get('buy_price')), stale),
+                            on_tap=_tap(),
+                        ),
+                        ft.DataCell(
+                            self._price_cell(self._fmt_isk(item.get('sell_price')), stale),
+                            on_tap=_tap(),
+                        ),
                         ft.DataCell(ft.Text(self._fmt_isk(item.get('taxes'))), on_tap=_tap()),
                         ft.DataCell(
-                            ft.Text(self._fmt_pct(item.get('profit_pct')), color=profit_color),
+                            ft.Text(self._fmt_pct(profit_pct), color=profit_color),
                             on_tap=_tap(),
                         ),
                         ft.DataCell(
@@ -565,15 +551,9 @@ class RestockingScreen:
         )
 
         self.results_container.content = ft.Column([
-            ft.Text(
-                f"Items to Restock ({len(self.items_data)})",
-                size=16,
-                weight=ft.FontWeight.BOLD,
-            ),
-            ft.Container(height=8),
             ft.Container(
                 content=ft.Row([data_table], scroll=ft.ScrollMode.AUTO, expand=True),
-                padding=10,
+                padding=ft.padding.only(top=0, left=0, right=4, bottom=4),
                 expand=True,
             ),
             ft.Container(height=8),

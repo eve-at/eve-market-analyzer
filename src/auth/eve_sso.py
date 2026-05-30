@@ -2,6 +2,9 @@
 import requests
 import secrets
 import webbrowser
+import base64
+import json
+from datetime import datetime
 from urllib.parse import urlencode
 import http.server
 import socketserver
@@ -22,7 +25,6 @@ class EVESSO:
     # EVE SSO endpoints
     AUTHORIZE_URL = "https://login.eveonline.com/v2/oauth/authorize"
     TOKEN_URL = "https://login.eveonline.com/v2/oauth/token"
-    VERIFY_URL = "https://esi.evetech.net/verify/"
 
     # Local callback server settings
     CALLBACK_HOST = "localhost"
@@ -138,49 +140,66 @@ class EVESSO:
             self.callback_server.shutdown()
             self.callback_server.server_close()
 
-    def _exchange_code_for_tokens(self, auth_code):
-        """Exchange authorization code for access and refresh tokens
+    @staticmethod
+    def _decode_jwt_payload(token):
+        """Decode JWT payload without signature verification.
 
-        Returns:
-            dict: Character data including tokens and character info
+        EVE SSO v2 access tokens are JWTs signed by CCP - we trust them
+        because we just received them directly from login.eveonline.com.
         """
         try:
-            # Request tokens
-            data = {
-                'grant_type': 'authorization_code',
-                'code': auth_code,
-                'client_id': self.client_id,
-                'client_secret': self.client_secret
-            }
+            payload_b64 = token.split('.')[1]
+            # Fix base64 padding
+            payload_b64 += '=' * (4 - len(payload_b64) % 4)
+            return json.loads(base64.urlsafe_b64decode(payload_b64))
+        except Exception as e:
+            print(f"Failed to decode JWT payload: {e}")
+            return {}
 
-            response = requests.post(self.TOKEN_URL, data=data, timeout=10)
+    def _exchange_code_for_tokens(self, auth_code):
+        """Exchange authorization code for access and refresh tokens.
+
+        Returns:
+            dict: Character data including tokens and character info, or None on failure.
+        """
+        try:
+            response = requests.post(
+                self.TOKEN_URL,
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': auth_code,
+                    'client_id': self.client_id,
+                    'client_secret': self.client_secret,
+                },
+                timeout=10,
+            )
             response.raise_for_status()
 
             tokens = response.json()
-            access_token = tokens.get('access_token')
+            access_token = tokens['access_token']
             refresh_token = tokens.get('refresh_token')
 
-            # Verify token and get character info
-            headers = {
-                'Authorization': f'Bearer {access_token}'
-            }
+            # Extract character info from JWT payload (EVE SSO v2 - no verify endpoint needed)
+            payload = self._decode_jwt_payload(access_token)
 
-            verify_response = requests.get(self.VERIFY_URL, headers=headers, timeout=10)
-            verify_response.raise_for_status()
+            # sub format: "CHARACTER:EVE:12345678"
+            sub = payload.get('sub', '')
+            character_id = int(sub.split(':')[-1]) if ':' in sub else None
+            character_name = payload.get('name', '')
 
-            character_info = verify_response.json()
+            # exp is a Unix timestamp
+            exp = payload.get('exp')
+            token_expiry = datetime.fromtimestamp(exp) if exp else None
 
-            # Get character portrait
-            character_id = character_info.get('CharacterID')
             portrait_url = f"https://images.evetech.net/characters/{character_id}/portrait?size=128"
 
             return {
                 'character_id': character_id,
-                'character_name': character_info.get('CharacterName'),
+                'character_name': character_name,
                 'character_portrait_url': portrait_url,
                 'access_token': access_token,
                 'refresh_token': refresh_token,
-                'token_expiry': None  # TODO: Calculate expiry from expires_in
+                'token_expiry': token_expiry,
             }
 
         except requests.exceptions.RequestException as e:

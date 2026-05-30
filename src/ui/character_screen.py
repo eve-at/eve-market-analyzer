@@ -602,9 +602,9 @@ class CharacterScreen:
             is_first_import = max_known_id is None
 
             if is_first_import:
-                log("First import — fetching full transaction history...")
+                log("First import - fetching full transaction history...")
             else:
-                log(f"Incremental import — fetching transactions newer than ID {max_known_id}...")
+                log(f"Incremental import - fetching transactions newer than ID {max_known_id}...")
 
             all_new = []
             from_id = None  # Start from most recent
@@ -633,10 +633,10 @@ class CharacterScreen:
                     log(f"Fetched {len(transactions)} from ESI, {len(new_in_page)} are new")
 
                     if len(new_in_page) < len(transactions):
-                        # Hit already-known territory — stop
+                        # Hit already-known territory - stop
                         break
 
-                # If fewer than a full page — this was the last page
+                # If fewer than a full page - this was the last page
                 if len(transactions) < ESI_PAGE_SIZE:
                     break
 
@@ -650,7 +650,7 @@ class CharacterScreen:
             else:
                 log("No new transactions to save.")
 
-            # On first import — rebuild profit from scratch
+            # On first import - rebuild profit from scratch
             if is_first_import and all_new:
                 log("")
                 log("First import: rebuilding profit data from all wallet transactions...")

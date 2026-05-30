@@ -121,9 +121,16 @@ def update_orders(region_id, callback=None):
                 system_id INTEGER,
                 type_id INTEGER,
                 volume_remain INTEGER,
-                volume_total INTEGER
+                volume_total INTEGER,
+                fetched_at TEXT
             )
         """)
+        # Add fetched_at to existing tables that pre-date the column
+        try:
+            cursor.execute(f"ALTER TABLE [{table_name}] ADD COLUMN fetched_at TEXT")
+            conn.commit()
+        except Exception:
+            pass  # Column already exists
         log(f"Table {table_name} ready")
         log("")
 
@@ -202,6 +209,11 @@ def update_orders(region_id, callback=None):
             except requests.exceptions.RequestException as e:
                 log(f"Error fetching page {page}: {e}")
                 break
+
+        # Stamp every row with the fetch timestamp
+        now_iso = datetime.now().isoformat()
+        cursor.execute(f"UPDATE [{table_name}] SET fetched_at = ?", (now_iso,))
+        conn.commit()
 
         log("")
         log("="*60)

@@ -109,7 +109,7 @@ class ESIAPI:
         Args:
             character_id: Character ID
             access_token: Valid access token
-            from_id: Optional transaction_id — return only transactions older than this ID (for pagination)
+            from_id: Optional transaction_id - return only transactions older than this ID (for pagination)
 
         Returns:
             list: Transaction objects, or None if failed
@@ -160,6 +160,28 @@ class ESIAPI:
         except Exception as e:
             print(f"Error fetching character active orders: {e}")
             return None
+
+    def open_market_window(self, type_id, access_token):
+        """Open the in-game market window for a specific item type.
+
+        Requires scope esi-ui.open_window.v1.
+
+        Returns:
+            True on success (HTTP 204), False otherwise.
+        """
+        try:
+            url = f"{self.ESI_BASE_URL}/ui/openwindow/marketdetails/"
+            headers = {'Authorization': f'Bearer {access_token}'}
+            params = {'type_id': type_id, 'datasource': 'tranquility'}
+
+            response = requests.post(url, headers=headers, params=params, timeout=10)
+            if response.status_code == 204:
+                return True
+            print(f"open_market_window failed: {response.status_code} - {response.text}")
+            return False
+        except Exception as e:
+            print(f"Error opening market window: {e}")
+            return False
 
     def fetch_all_character_orders_history(self, character_id, access_token, progress_callback=None):
         """Fetch all pages of character order history

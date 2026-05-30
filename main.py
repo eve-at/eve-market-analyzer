@@ -96,6 +96,7 @@ class MainApp:
 
     def show_main_menu(self):
         """Show main menu"""
+        self._stop_restocking_monitoring()
         self.page.controls.clear()
 
         # Create app bar (main menu doesn't show back button)
@@ -243,6 +244,7 @@ class MainApp:
 
     def show_settings(self):
         """Show settings screen"""
+        self._stop_restocking_monitoring()
         self.page.controls.clear()
 
         # Create app bar with back button
@@ -274,6 +276,7 @@ class MainApp:
 
     def show_character(self):
         """Show character screen"""
+        self._stop_restocking_monitoring()
         self.page.controls.clear()
 
         # Create app bar with back button
@@ -370,6 +373,11 @@ class MainApp:
         )
         self.page.update()
 
+    def _stop_restocking_monitoring(self):
+        """Stop file monitoring if the restocking screen is active."""
+        if self.restocking_screen:
+            self.restocking_screen.stop_file_monitoring()
+
     def show_restocking(self):
         """Show restocking list screen"""
         self.page.controls.clear()
@@ -380,13 +388,13 @@ class MainApp:
             on_settings_click=self.show_settings,
             on_title_click=self.show_main_menu,
             show_back_button=True,
-            on_back_click=self.show_main_menu
+            on_back_click=self._back_from_restocking
         )
 
         self.restocking_screen = RestockingScreen(
             page=self.page,
             regions_data=self.regions_data,
-            on_back_callback=self.show_main_menu
+            on_back_callback=self._back_from_restocking
         )
 
         self.page.add(
@@ -397,6 +405,12 @@ class MainApp:
         )
         self.page.update()
         self.restocking_screen.start_auto_load()
+        self.restocking_screen.start_file_monitoring()
+
+    def _back_from_restocking(self):
+        """Navigate back from restocking screen, stopping file monitoring first."""
+        self._stop_restocking_monitoring()
+        self.show_main_menu()
 
     def on_logout(self):
         """Handle logout - refresh app bar"""

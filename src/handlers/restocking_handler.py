@@ -2,9 +2,15 @@
 import sqlite3
 import os
 import importlib
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from src.auth.esi_api import ESIAPI
 from src.database.models import get_character, save_character
+
+THE_FORGE_REGION_ID = 10000002
+
+ESI_MARKETS_URL = "https://esi.evetech.net/latest/markets"
 
 
 def _get_settings():
@@ -123,6 +129,55 @@ def get_restocking_items(character_id, active_type_ids):
     finally:
         if conn:
             conn.close()
+
+
+def get_prices_from_esi(region_id, type_ids, callback=None):
+    """Fetch max buy / min sell prices directly from ESI for the given type_ids.
+
+    Public endpoint - no authentication required.
+    Uses concurrent requests (max 5 workers) to stay within ESI rate limits.
+
+    Returns:
+        dict: {type_id: {'buy_price': float|None, 'sell_price': float|None}}
+    """
+    def log(msg):
+        if callback:
+            callback(msg)
+
+    type_ids = list(type_ids)
+    if not type_ids:
+        return {}
+
+    def _fetch_one(type_id):
+        url = f"{ESI_MARKETS_URL}/{region_id}/orders/"
+        params = {'order_type': 'all', 'type_id': type_id, 'datasource': 'tranquility'}
+        try:
+            resp = requests.get(url, params=params, timeout=15)
+            if resp.status_code == 200:
+                orders = resp.json()
+                buy_prices = [o['price'] for o in orders if o.get('is_buy_order')]
+                sell_prices = [o['price'] for o in orders if not o.get('is_buy_order')]
+                return type_id, {
+                    'buy_price': max(buy_prices) if buy_prices else None,
+                    'sell_price': min(sell_prices) if sell_prices else None,
+                }
+        except Exception as e:
+            print(f"ESI price fetch error for type_id {type_id}: {e}")
+        return type_id, {'buy_price': None, 'sell_price': None}
+
+    log(f"Fetching prices for {len(type_ids)} items from ESI...")
+    prices = {}
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(_fetch_one, tid): tid for tid in type_ids}
+        done = 0
+        for future in as_completed(futures):
+            type_id, price_data = future.result()
+            prices[type_id] = price_data
+            done += 1
+            log(f"Fetched {done}/{len(type_ids)}...")
+
+    return prices
 
 
 def calculate_profit(buy_price, sell_price, broker_fee_buy, broker_fee_sell, sales_tax):

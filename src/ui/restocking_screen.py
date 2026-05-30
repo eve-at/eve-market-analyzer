@@ -9,10 +9,15 @@ from src.auth.esi_api import ESIAPI
 from src.handlers.restocking_handler import (
     load_active_order_type_ids,
     get_restocking_items,
+    get_prices_from_esi,
     calculate_profit,
+    THE_FORGE_REGION_ID,
 )
 from src.handlers.export_file_handler import ExportFileHandler
 from src.utils.export_parser import parse_export_file
+from .autocomplete_field import AutoCompleteField
+
+_THE_FORGE_NAME = "The Forge"
 
 
 class RestockingScreen:
@@ -28,11 +33,15 @@ class RestockingScreen:
         self.sort_column_index = 2    # default: qty_sold
         self.sort_ascending = False
         self.current_page = 0
-        self.rows_per_page = 50
+        self.rows_per_page = 15
         self.clicked_rows = set()
 
         # Per-item price freshness {type_id: datetime}
         self.price_updated_at = {}
+
+        # Selected region - default to The Forge
+        self.selected_region_id = THE_FORGE_REGION_ID
+        self.selected_region_name = _THE_FORGE_NAME
 
         # File monitoring
         self.observer = None
@@ -45,6 +54,70 @@ class RestockingScreen:
         # ── Status text ───────────────────────────────────────────────────
         self.status_text = ft.Text(
             "Loading active orders...", size=12, color=ft.Colors.BLUE
+        )
+
+        # ── Region selector + Update Prices ──────────────────────────────
+        self.region_field = AutoCompleteField(
+            label="Region",
+            hint_text="Start typing region name...",
+            default_value=_THE_FORGE_NAME,
+            data_dict=self.regions_data,
+            on_select_callback=self.on_region_selected,
+            on_validation_change=None,
+        )
+        self.region_field.text_field.value = _THE_FORGE_NAME
+        self.region_field.selected_id = THE_FORGE_REGION_ID
+        self.region_field.selected_name = _THE_FORGE_NAME
+        self.region_field.id_label.value = f"ID: {THE_FORGE_REGION_ID}"
+        self.region_field.id_label.visible = True
+
+        self.update_prices_button = ft.ElevatedButton(
+            "Update Prices",
+            icon=ft.Icons.REFRESH,
+            on_click=self.on_update_prices,
+            disabled=False,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE,
+                color=ft.Colors.WHITE,
+                padding=ft.Padding(20, 10, 20, 10),
+            ),
+        )
+
+        self._rows_label = ft.Text("15", size=12, color=ft.Colors.GREY_800)
+        self.rows_per_page_menu = ft.PopupMenuButton(
+            content=ft.Container(
+                content=ft.Row(
+                    [self._rows_label, ft.Icon(ft.Icons.ARROW_DROP_DOWN, size=16, color=ft.Colors.GREY_600)],
+                    spacing=2,
+                    tight=True,
+                ),
+                border=ft.border.all(1, ft.Colors.GREY_400),
+                border_radius=4,
+                padding=ft.padding.symmetric(horizontal=8, vertical=4),
+            ),
+            items=[
+                ft.PopupMenuItem(content=v, on_click=self.on_rows_per_page_change, data=v)
+                for v in ("15", "30", "50", "100")
+            ],
+            padding=0,
+        )
+
+        self.price_controls_row = ft.Row(
+            [
+                self.region_field.container,
+                ft.Container(
+                    content=self.update_prices_button,
+                    margin=ft.margin.only(top=5),
+                ),
+                ft.Container(expand=True),
+                ft.Row([
+                    ft.Text("Rows per page:", size=12, color=ft.Colors.GREY_600),
+                    self.rows_per_page_menu,
+                ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ],
+            spacing=10,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+            visible=False,
         )
 
         # ── Hint (shown after table loads) ───────────────────────────────
@@ -100,6 +173,8 @@ class RestockingScreen:
                 ft.Container(height=8),
                 self.status_text,
                 self.hint_container,
+                ft.Container(height=4),
+                self.price_controls_row,
                 ft.Divider(),
                 self.loader_container,
                 self.results_container,
@@ -180,6 +255,7 @@ class RestockingScreen:
                 self.status_text.value = f"Found {len(items)} items to restock."
                 self.status_text.color = ft.Colors.GREEN
                 self.hint_container.visible = True
+                self.price_controls_row.visible = True
 
             self.page.update()
 
@@ -327,6 +403,84 @@ class RestockingScreen:
             self.clicked_rows.add(type_id)
         self._render_table()
         self.page.update()
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Region / Update Prices
+    # ─────────────────────────────────────────────────────────────────────
+
+    def on_region_selected(self, name, region_id):
+        self.selected_region_id = region_id
+        self.selected_region_name = name
+        self.update_prices_button.disabled = False
+        self.page.update()
+
+    def on_rows_per_page_change(self, e):
+        value = e.control.data
+        self.rows_per_page = int(value)
+        self._rows_label.value = value
+        self.current_page = 0
+        if self.items_data:
+            self._render_table()
+        self.page.update()
+
+    def on_update_prices(self, e):
+        if not self.selected_region_id or not self.items_data:
+            return
+
+        self.update_prices_button.disabled = True
+        self.status_text.value = f"Fetching prices from {self.selected_region_name}..."
+        self.status_text.color = ft.Colors.BLUE
+        self.page.update()
+
+        region_id = self.selected_region_id
+        region_name = self.selected_region_name
+        type_ids = [item['type_id'] for item in self.items_data]
+
+        def _progress(msg):
+            async def _upd():
+                self.status_text.value = msg
+                self.page.update()
+            self.page.run_task(_upd)
+
+        def _thread():
+            prices = get_prices_from_esi(region_id, type_ids, callback=_progress)
+
+            async def _done():
+                self._apply_prices(prices, datetime.now())
+                self._render_table()
+                self.update_prices_button.disabled = False
+                self.status_text.value = (
+                    f"Prices updated from {region_name} - {len(self.items_data)} items"
+                )
+                self.status_text.color = ft.Colors.GREEN
+                self.page.update()
+
+            self.page.run_task(_done)
+
+        threading.Thread(target=_thread, daemon=True).start()
+
+    def _apply_prices(self, prices, fetched_at_dt):
+        """Apply a price dict to self.items_data and recalculate profit."""
+        broker_fee_buy = float((self.current_character or {}).get('broker_fee_buy', 3.0))
+        broker_fee_sell = float((self.current_character or {}).get('broker_fee_sell', 3.0))
+        sales_tax = float((self.current_character or {}).get('sales_tax', 7.5))
+
+        for item in self.items_data:
+            p = prices.get(item['type_id'], {})
+            buy_price = p.get('buy_price')
+            sell_price = p.get('sell_price')
+            item['buy_price'] = buy_price
+            item['sell_price'] = sell_price
+            if buy_price is not None and sell_price is not None:
+                calc = calculate_profit(buy_price, sell_price,
+                                        broker_fee_buy, broker_fee_sell, sales_tax)
+                item['taxes'] = calc['taxes']
+                item['profit_isk'] = calc['profit_isk']
+                item['profit_pct'] = calc['profit_pct']
+            else:
+                item['taxes'] = item['profit_isk'] = item['profit_pct'] = None
+            if buy_price is not None or sell_price is not None:
+                self.price_updated_at[item['type_id']] = fetched_at_dt
 
     # ─────────────────────────────────────────────────────────────────────
     # Open item in EVE market window

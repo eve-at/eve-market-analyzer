@@ -135,6 +135,32 @@ class ESIAPI:
             print(f"Error fetching wallet transactions: {e}")
             return None
 
+    def get_character_active_orders(self, character_id, access_token):
+        """Get character's currently active (open) orders from ESI API
+
+        Args:
+            character_id: Character ID
+            access_token: Valid access token
+
+        Returns:
+            list: Active order objects, or None if failed
+        """
+        try:
+            url = f"{self.ESI_BASE_URL}/characters/{character_id}/orders/"
+            headers = {'Authorization': f'Bearer {access_token}'}
+
+            response = requests.get(url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"Failed to fetch active orders: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"Error fetching character active orders: {e}")
+            return None
+
     def fetch_all_character_orders_history(self, character_id, access_token, progress_callback=None):
         """Fetch all pages of character order history
 

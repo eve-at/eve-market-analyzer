@@ -40,6 +40,12 @@ class MainMenu:
                 "icon": ft.Icons.ROUTE,
                 "description": "Optimize delivery routes for multiple stations",
                 "key": "courier_path_finder"
+            },
+            {
+                "title": "Restocking List",
+                "icon": ft.Icons.SHOPPING_CART,
+                "description": "Items you traded before but need to restock",
+                "key": "restocking_list"
             }
         ]
 
@@ -101,8 +107,9 @@ class MainMenu:
                 ft.Container(height=20),
                 ft.Row([
                     menu_cards[3],
-                    menu_cards[4]
-                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),                
+                    menu_cards[4],
+                    menu_cards[5],
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=20,
             expand=True

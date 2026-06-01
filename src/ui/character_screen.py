@@ -3,26 +3,26 @@ import flet as ft
 from datetime import datetime, timedelta
 from threading import Thread
 from src.auth.eve_sso import EVESSO
-from src.auth.esi_api import ESIAPI
 from src.database.models import (
     get_character, save_character, get_current_character_id,
     save_setting, create_character_history_table,
     create_character_inventory_table, create_character_profit_table,
     get_profit_by_months, get_profit_by_days,
     get_profit_by_items,
-    create_character_wallet_transactions_table, save_wallet_transactions,
-    get_max_wallet_transaction_id, get_min_wallet_transaction_id,
-    clear_character_profit_data, process_wallet_transactions, get_wallet_transactions,
+    create_character_wallet_transactions_table,
+    get_wallet_transactions,
 )
+from src.handlers.wallet_handler import pull_wallet_transactions
 
 
 class CharacterScreen:
     """Character screen with EVE Online account and trading settings"""
 
-    def __init__(self, page: ft.Page, on_back_callback, on_logout_callback=None):
+    def __init__(self, page: ft.Page, on_back_callback, on_logout_callback=None, on_login_callback=None):
         self.page = page
         self.on_back_callback = on_back_callback
         self.on_logout_callback = on_logout_callback
+        self.on_login_callback = on_login_callback
         self.current_character = None
         self.eve_sso = EVESSO()
 
@@ -463,8 +463,10 @@ class CharacterScreen:
             self.status_text.value = f"Successfully logged in as {character_data.get('character_name')}"
             self.status_text.color = ft.Colors.GREEN
 
-            # Call logout callback to refresh app bar
-            if self.on_logout_callback:
+            # Notify main app about login (starts auto-sync, refreshes app bar)
+            if self.on_login_callback:
+                self.on_login_callback(character_data)
+            elif self.on_logout_callback:
                 self.on_logout_callback()
 
             self.page.update()
@@ -549,7 +551,7 @@ class CharacterScreen:
         thread.start()
 
     def _run_wallet_transactions_import(self):
-        """Fetch and process wallet transactions in a background thread"""
+        """Fetch and process wallet transactions in a background thread."""
         def log(message):
             async def _add():
                 self.log_column.controls.append(
@@ -559,129 +561,13 @@ class CharacterScreen:
             self.page.run_task(_add)
 
         try:
-            character_id = self.current_character['character_id']
-            access_token = self.current_character.get('access_token')
-            refresh_token = self.current_character.get('refresh_token')
-            token_expiry = self.current_character.get('token_expiry')
-
             log("Starting wallet transactions import...")
-
-            # Refresh token if needed
-            esi_api = ESIAPI()
-            if token_expiry and isinstance(token_expiry, str):
-                token_expiry = datetime.fromisoformat(token_expiry)
-            if not access_token or not token_expiry or datetime.now() >= token_expiry:
-                log("Access token expired, refreshing...")
-                if not refresh_token:
-                    log("ERROR: No refresh token. Please log in again.")
-                    async def _reenable():
-                        self.update_wallet_button.disabled = False
-                        self.page.update()
-                    self.page.run_task(_reenable)
-                    return
-                token_data = esi_api.refresh_access_token(refresh_token)
-                if not token_data:
-                    log("ERROR: Failed to refresh token. Please log in again.")
-                    async def _reenable():
-                        self.update_wallet_button.disabled = False
-                        self.page.update()
-                    self.page.run_task(_reenable)
-                    return
-                access_token = token_data['access_token']
-                from src.database.models import save_character as _save_char
-                _save_char({
-                    'character_id': character_id,
-                    'character_name': self.current_character['character_name'],
-                    'access_token': access_token,
-                    'token_expiry': token_data['token_expiry'],
-                })
-                log("Token refreshed.")
-
-            # Determine import mode
-            max_known_id = get_max_wallet_transaction_id(character_id)
-            is_first_import = max_known_id is None
-
-            if is_first_import:
-                log("First import - fetching full transaction history...")
-            else:
-                log(f"Incremental import - fetching transactions newer than ID {max_known_id}...")
-
-            all_new = []
-            from_id = None  # Start from most recent
-            ESI_PAGE_SIZE = 2500  # ESI returns up to 2500 per request
-
-            while True:
-                transactions = esi_api.get_character_wallet_transactions(
-                    character_id, access_token, from_id
-                )
-
-                if transactions is None:
-                    log("ERROR: Failed to fetch transactions from ESI.")
-                    break
-
-                if not transactions:
-                    log("No more transactions returned.")
-                    break
-
-                if is_first_import:
-                    all_new.extend(transactions)
-                    log(f"Fetched {len(transactions)} transactions (total so far: {len(all_new)})")
-                else:
-                    # Incremental: keep only transactions newer than max_known_id
-                    new_in_page = [t for t in transactions if t['transaction_id'] > max_known_id]
-                    all_new.extend(new_in_page)
-                    log(f"Fetched {len(transactions)} from ESI, {len(new_in_page)} are new")
-
-                    if len(new_in_page) < len(transactions):
-                        # Hit already-known territory - stop
-                        break
-
-                # If fewer than a full page - this was the last page
-                if len(transactions) < ESI_PAGE_SIZE:
-                    break
-
-                # Pagination: request older transactions
-                from_id = min(t['transaction_id'] for t in transactions)
-
-            if all_new:
-                log(f"Saving {len(all_new)} new transactions to database...")
-                inserted, skipped = save_wallet_transactions(character_id, all_new)
-                log(f"Saved: {inserted} new, {skipped} duplicates skipped")
-            else:
-                log("No new transactions to save.")
-
-            # On first import - rebuild profit from scratch
-            if is_first_import and all_new:
-                log("")
-                log("First import: rebuilding profit data from all wallet transactions...")
-                log("Clearing existing inventory and profit tables...")
-                clear_character_profit_data(character_id)
-
-            # Process unprocessed transactions into profit tables
-            broker_fee_buy = float(self.current_character.get('broker_fee_buy', 3.00))
-            broker_fee_sell = float(self.current_character.get('broker_fee_sell', 3.00))
-            sales_tax = float(self.current_character.get('sales_tax', 7.50))
-
-            log("Processing transactions (FIFO profit calculation)...")
-            stats = process_wallet_transactions(character_id, broker_fee_buy, broker_fee_sell, sales_tax)
-
-            if stats:
-                log("=" * 50)
-                log("Processing complete!")
-                log(f"Buy transactions processed: {stats['buy_transactions_processed']}")
-                log(f"Sell transactions processed: {stats['sell_transactions_processed']}")
-                log(f"Items added to inventory: {stats['items_added_to_inventory']}")
-                log(f"Items sold: {stats['items_sold']}")
-                if stats['items_sold_without_purchase'] > 0:
-                    log(f"Items sold without purchase record: {stats['items_sold_without_purchase']} (profit = 0)")
-            else:
-                log("ERROR: Failed to process transactions.")
-
+            updated = pull_wallet_transactions(self.current_character, log=log)
+            self.current_character = updated
         except Exception as e:
             log(f"ERROR: {str(e)}")
             import traceback
             log(traceback.format_exc())
-
         finally:
             async def _reenable():
                 self.update_wallet_button.disabled = False

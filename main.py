@@ -17,6 +17,8 @@ from src.ui import (
 )
 from src.app import EVEMarketApp
 from src.database import load_regions_and_items, create_tables, get_setting
+from src.database.models import get_current_character_id, get_character
+from src.services import WalletAutoSync
 from settings import MARKETLOGS_DIR
 
 ACCOUNTING_TOOL_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".accounting_tool.lock")
@@ -32,6 +34,9 @@ class MainApp:
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.window.width = 1000
         self.page.window.height = 800
+
+        # Auto-sync service (runs for the lifetime of the app)
+        self.wallet_auto_sync = WalletAutoSync()
 
         # Screens
         self.init_screen = None
@@ -73,13 +78,16 @@ class MainApp:
 
     def on_init_complete(self):
         """Called when initialization is complete and database is ready"""
-        # Create additional tables if they don't exist
         create_tables()
-
-        # Load data from database
         self.regions_data, self.items_data = load_regions_and_items()
 
-        # Show welcome screen
+        # Start auto-sync if a character is already logged in
+        character_id = get_current_character_id()
+        if character_id:
+            character = get_character(character_id)
+            if character:
+                self.wallet_auto_sync.start(character, self.page)
+
         self.show_welcome_screen()
 
     def show_welcome_screen(self):
@@ -107,6 +115,7 @@ class MainApp:
             on_title_click=self.show_main_menu,
             show_back_button=False
         )
+        self._connect_sync_to_appbar()
 
         self.main_menu = MainMenu(
             page=self.page,
@@ -149,6 +158,7 @@ class MainApp:
             show_back_button=True,
             on_back_click=self.show_main_menu
         )
+        self._connect_sync_to_appbar()
 
         # Reuse InitScreen for data import
         self.update_data_screen = InitScreen(
@@ -195,6 +205,7 @@ class MainApp:
             show_back_button=True,
             on_back_click=self.on_market_history_back
         )
+        self._connect_sync_to_appbar()
 
         # Add app bar
         self.page.add(
@@ -227,6 +238,7 @@ class MainApp:
             show_back_button=True,
             on_back_click=self.show_main_menu
         )
+        self._connect_sync_to_appbar()
 
         self.trade_opportunities_screen = TradeOpportunitiesScreen(
             page=self.page,
@@ -256,6 +268,7 @@ class MainApp:
             show_back_button=True,
             on_back_click=self.show_main_menu
         )
+        self._connect_sync_to_appbar()
 
         # Load marketlogs_dir from database or use default from settings.py
         marketlogs_dir = get_setting('marketlogs_dir', MARKETLOGS_DIR)
@@ -288,11 +301,13 @@ class MainApp:
             show_back_button=True,
             on_back_click=self.show_main_menu
         )
+        self._connect_sync_to_appbar()
 
         self.character_screen = CharacterScreen(
             page=self.page,
             on_back_callback=self.show_main_menu,
-            on_logout_callback=self.on_logout
+            on_logout_callback=self.on_logout,
+            on_login_callback=self.on_login,
         )
 
         self.page.add(
@@ -359,6 +374,7 @@ class MainApp:
             show_back_button=True,
             on_back_click=self.show_main_menu
         )
+        self._connect_sync_to_appbar()
 
         self.courier_path_finder_screen = CourierPathFinderScreen(
             page=self.page,
@@ -390,6 +406,7 @@ class MainApp:
             show_back_button=True,
             on_back_click=self._back_from_restocking
         )
+        self._connect_sync_to_appbar()
 
         self.restocking_screen = RestockingScreen(
             page=self.page,
@@ -412,12 +429,25 @@ class MainApp:
         self._stop_restocking_monitoring()
         self.show_main_menu()
 
-    def on_logout(self):
-        """Handle logout - refresh app bar"""
+    def on_login(self, character_data):
+        """Called after successful EVE SSO login."""
+        self.wallet_auto_sync.start(character_data, self.page)
         if self.app_bar:
             self.app_bar.refresh()
-            # Update the page to reflect app bar changes
+            self._connect_sync_to_appbar()
             self.page.update()
+
+    def on_logout(self):
+        """Handle logout - stop auto-sync and refresh app bar."""
+        self.wallet_auto_sync.stop()
+        if self.app_bar:
+            self.app_bar.refresh()
+            self.page.update()
+
+    def _connect_sync_to_appbar(self):
+        """Wire WalletAutoSync status updates into the current AppBar."""
+        if self.app_bar:
+            self.wallet_auto_sync.set_status_callback(self.app_bar.set_sync_status)
 
 
 def main(page: ft.Page):

@@ -15,10 +15,15 @@ class AppBar:
         self.on_back_click = on_back_click
         self.current_character = None
 
-        # Load current character
-        self.load_character()
+        # Persistent status widget — survives app bar rebuilds
+        self.sync_status_text = ft.Text(
+            "",
+            size=11,
+            color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE),
+            italic=True,
+        )
 
-        # Create app bar
+        self.load_character()
         self.app_bar = self.build_app_bar()
 
     def load_character(self):
@@ -26,12 +31,12 @@ class AppBar:
         character_id = get_current_character_id()
         if character_id:
             self.current_character = get_character(character_id)
+        else:
+            self.current_character = None
 
     def build_app_bar(self):
         """Build the app bar UI"""
-        # Character info or login button
         if self.current_character:
-            # Logged in: show avatar and name
             character_button = ft.Container(
                 content=ft.Row([
                     ft.Image(
@@ -50,11 +55,10 @@ class AppBar:
                 padding=ft.padding.symmetric(horizontal=12, vertical=3),
                 border_radius=20,
                 bgcolor=ft.Colors.WHITE,
-                on_click=lambda e: self.on_character_click(),
+                on_click=lambda _: self.on_character_click(),
                 ink=True
             )
         else:
-            # Not logged in: show "Log In" button
             character_button = ft.Container(
                 content=ft.Text(
                     "Log In",
@@ -65,20 +69,18 @@ class AppBar:
                 padding=ft.padding.symmetric(horizontal=12, vertical=3),
                 border_radius=20,
                 bgcolor=ft.Colors.WHITE,
-                on_click=lambda e: self.on_character_click(),
+                on_click=lambda _: self.on_character_click(),
                 ink=True
             )
 
-        # Settings gear button
         settings_button = ft.IconButton(
             icon=ft.Icons.SETTINGS,
             icon_size=20,
             icon_color=ft.Colors.WHITE,
             tooltip="Settings",
-            on_click=lambda e: self.on_settings_click()
+            on_click=lambda _: self.on_settings_click()
         )
 
-        # Title container (clickable if callback provided)
         title_widget = ft.Text(
             "EVE Online Accounting Tool",
             size=14,
@@ -90,7 +92,7 @@ class AppBar:
         if self.on_title_click:
             title_container = ft.Container(
                 content=title_widget,
-                on_click=lambda e: self.on_title_click(),
+                on_click=lambda _: self.on_title_click(),
                 ink=True,
                 border_radius=5,
                 padding=ft.padding.symmetric(horizontal=10, vertical=5)
@@ -98,51 +100,48 @@ class AppBar:
         else:
             title_container = title_widget
 
-        # Build app bar row content
         row_controls = []
 
-        # Back button (if enabled)
         if self.show_back_button and self.on_back_click:
             back_button = ft.TextButton(
                 "< Home",
-                on_click=lambda e: self.on_back_click(),
-                style=ft.ButtonStyle(
-                    color=ft.Colors.WHITE
-                )
+                on_click=lambda _: self.on_back_click(),
+                style=ft.ButtonStyle(color=ft.Colors.WHITE)
             )
             row_controls.append(back_button)
         else:
-            # Empty container for spacing
             row_controls.append(ft.Container(width=80))
 
-        # Title (centered)
+        # Title centered
         row_controls.append(ft.Container(expand=True))
         row_controls.append(title_container)
         row_controls.append(ft.Container(expand=True))
 
-        # Character button and Settings button
+        # Sync status — shown only when character is logged in
+        if self.current_character:
+            row_controls.append(self.sync_status_text)
+            row_controls.append(ft.Container(width=12))
+
         row_controls.append(character_button)
         row_controls.append(ft.Container(width=5))
         row_controls.append(settings_button)
 
-        # App bar container
-        app_bar = ft.Container(
-            content=ft.Row(
-                row_controls,
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN
-            ),
+        return ft.Container(
+            content=ft.Row(row_controls, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             padding=ft.padding.symmetric(horizontal=20, vertical=3),
             bgcolor=ft.Colors.with_opacity(0.8, ft.Colors.ON_SURFACE),
             border=ft.border.only(bottom=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT))
         )
 
-        return app_bar
+    def set_sync_status(self, text):
+        """Update the sync status text in-place (no full rebuild needed)."""
+        self.sync_status_text.value = text
 
     def refresh(self):
-        """Refresh character info"""
+        """Reload character and rebuild app bar (e.g. after login/logout)."""
         self.load_character()
         self.app_bar = self.build_app_bar()
 
     def get(self):
-        """Get the app bar component"""
+        """Return the app bar container."""
         return self.app_bar

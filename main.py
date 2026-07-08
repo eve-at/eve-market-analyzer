@@ -58,6 +58,10 @@ class MainApp:
         self.regions_data = {}
         self.items_data = {}
 
+        # Intercept window close to shut down Accounting Tool
+        self.page.window.prevent_close = True
+        self.page.window.on_event = self._on_window_event
+
         # Show initialization screen
         self.show_init_screen()
 
@@ -331,23 +335,6 @@ class MainApp:
             creationflags=subprocess.DETACHED_PROCESS
         )
 
-    def _is_accounting_tool_running(self):
-        """Check if the accounting tool window is already running"""
-        if not os.path.exists(ACCOUNTING_TOOL_LOCK_FILE):
-            return False
-        try:
-            with open(ACCOUNTING_TOOL_LOCK_FILE, "r") as f:
-                pid = int(f.read().strip())
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
-        except (ValueError, OSError):
-            return False
-
     def _focus_accounting_tool_window(self):
         """Find and focus the existing Accounting Tool window"""
         user32 = ctypes.windll.user32
@@ -448,6 +435,45 @@ class MainApp:
         """Wire WalletAutoSync status updates into the current AppBar."""
         if self.app_bar:
             self.wallet_auto_sync.set_status_callback(self.app_bar.set_sync_status)
+
+    def _on_window_event(self, e):
+        if e.data == "close":
+            try:
+                if self.accounting_tool_process and self.accounting_tool_process.poll() is None:
+                    self.accounting_tool_process.kill()
+                user32 = ctypes.windll.user32
+                hwnd = user32.FindWindowW(None, ACCOUNTING_TOOL_WINDOW_TITLE)
+                if hwnd:
+                    user32.PostMessageW(hwnd, 0x0010, 0, 0)
+                # kill() skips the process finally-block — remove lock file manually
+                try:
+                    os.remove(ACCOUNTING_TOOL_LOCK_FILE)
+                except OSError:
+                    pass
+            except Exception as ex:
+                print(f"Error closing accounting tool: {ex}")
+            finally:
+                self.page.window.destroy()
+
+    def _is_accounting_tool_running(self):
+        """Check if the accounting tool process is still alive."""
+        if not os.path.exists(ACCOUNTING_TOOL_LOCK_FILE):
+            return False
+        try:
+            with open(ACCOUNTING_TOOL_LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong(0)
+            kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            kernel32.CloseHandle(handle)
+            return exit_code.value == STILL_ACTIVE
+        except (ValueError, OSError):
+            return False
 
 
 def main(page: ft.Page):

@@ -58,9 +58,8 @@ class MainApp:
         self.regions_data = {}
         self.items_data = {}
 
-        # Intercept window close to shut down Accounting Tool
-        self.page.window.prevent_close = True
-        self.page.window.on_event = self._on_window_event
+        # Kill Accounting Tool when main window closes
+        self.page.on_close = self._on_app_close
 
         # Show initialization screen
         self.show_init_screen()
@@ -436,24 +435,20 @@ class MainApp:
         if self.app_bar:
             self.wallet_auto_sync.set_status_callback(self.app_bar.set_sync_status)
 
-    def _on_window_event(self, e):
-        if e.data == "close":
+    def _on_app_close(self, _):
+        try:
+            if self.accounting_tool_process and self.accounting_tool_process.poll() is None:
+                self.accounting_tool_process.kill()
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, ACCOUNTING_TOOL_WINDOW_TITLE)
+            if hwnd:
+                user32.PostMessageW(hwnd, 0x0010, 0, 0)
             try:
-                if self.accounting_tool_process and self.accounting_tool_process.poll() is None:
-                    self.accounting_tool_process.kill()
-                user32 = ctypes.windll.user32
-                hwnd = user32.FindWindowW(None, ACCOUNTING_TOOL_WINDOW_TITLE)
-                if hwnd:
-                    user32.PostMessageW(hwnd, 0x0010, 0, 0)
-                # kill() skips the process finally-block — remove lock file manually
-                try:
-                    os.remove(ACCOUNTING_TOOL_LOCK_FILE)
-                except OSError:
-                    pass
-            except Exception as ex:
-                print(f"Error closing accounting tool: {ex}")
-            finally:
-                self.page.window.destroy()
+                os.remove(ACCOUNTING_TOOL_LOCK_FILE)
+            except OSError:
+                pass
+        except Exception as ex:
+            print(f"Error closing accounting tool: {ex}")
 
     def _is_accounting_tool_running(self):
         """Check if the accounting tool process is still alive."""

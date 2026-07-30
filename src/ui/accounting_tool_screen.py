@@ -9,7 +9,8 @@ from src.utils.export_parser import parse_export_file
 from src.utils.price_calculator import (
     get_next_sell_tick, get_next_buy_tick,
     calculate_profit, count_competitors,
-    round_to_valid_price, adjust_price_by_scroll
+    round_to_valid_price, adjust_price_by_scroll,
+    format_price_display,
 )
 from src.database.models import get_current_character_id, get_character, get_last_buy_price
 
@@ -363,7 +364,7 @@ class AccountingToolScreen:
 
             # Update display
             next_sell = get_next_sell_tick(new_price)
-            e.control.value = f"{int(next_sell):,}"
+            e.control.value = format_price_display(next_sell)
 
             # Recalculate profit
             self.update_calculations()
@@ -371,7 +372,7 @@ class AccountingToolScreen:
             # Invalid input, revert to current value
             if self.current_min_sell is not None:
                 next_sell = get_next_sell_tick(self.current_min_sell)
-                e.control.value = f"{int(next_sell):,}"
+                e.control.value = format_price_display(next_sell)
                 self.page.update()
 
     def on_max_buy_field_change(self, e):
@@ -412,7 +413,7 @@ class AccountingToolScreen:
 
             # Update display
             next_buy = get_next_buy_tick(new_price)
-            e.control.value = f"{int(next_buy):,}"
+            e.control.value = format_price_display(next_buy)
 
             # Recalculate profit
             self.update_calculations()
@@ -420,7 +421,7 @@ class AccountingToolScreen:
             # Invalid input, revert to current value
             if self.current_max_buy is not None:
                 next_buy = get_next_buy_tick(self.current_max_buy)
-                e.control.value = f"{int(next_buy):,}"
+                e.control.value = format_price_display(next_buy)
                 self.page.update()
 
     def on_min_sell_scroll(self, e: ft.ScrollEvent):
@@ -440,7 +441,7 @@ class AccountingToolScreen:
 
         # Update display
         next_sell = get_next_sell_tick(new_price)
-        self.min_sell_field.value = f"{int(next_sell):,}"
+        self.min_sell_field.value = format_price_display(next_sell)
 
         # Recalculate profit
         self.update_calculations()
@@ -462,7 +463,7 @@ class AccountingToolScreen:
 
         # Update display
         next_buy = get_next_buy_tick(new_price)
-        self.max_buy_field.value = f"{int(next_buy):,}"
+        self.max_buy_field.value = format_price_display(next_buy)
 
         # Recalculate profit
         self.update_calculations()
@@ -531,13 +532,13 @@ class AccountingToolScreen:
         # Calculate next ticks (show without decimals in display, but keep decimals for clipboard)
         if self.current_min_sell is not None:
             next_sell = get_next_sell_tick(self.current_min_sell)
-            self.min_sell_field.value = f"{int(next_sell):,}"
+            self.min_sell_field.value = format_price_display(next_sell)
         else:
             self.min_sell_field.value = "N/A"
 
         if self.current_max_buy is not None:
             next_buy = get_next_buy_tick(self.current_max_buy)
-            self.max_buy_field.value = f"{int(next_buy):,}"
+            self.max_buy_field.value = format_price_display(next_buy)
         else:
             self.max_buy_field.value = "N/A"
 
@@ -598,7 +599,7 @@ class AccountingToolScreen:
 
             if last_buy_price:
                 # Display last buy price
-                self.last_buy_price_text.value = f"Last Buy Price: {int(last_buy_price):,} ISK"
+                self.last_buy_price_text.value = f"Last Buy Price: {format_price_display(last_buy_price)} ISK"
                 self.last_buy_price_text.visible = True
 
                 # Calculate profit from last buy to current sell

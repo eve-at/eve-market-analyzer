@@ -1,4 +1,5 @@
 """Accounting Tool screen UI component"""
+import os
 import flet as ft
 import threading
 import requests
@@ -13,6 +14,7 @@ from src.utils.price_calculator import (
     format_price_display,
 )
 from src.database.models import get_current_character_id, get_character, get_last_buy_price
+from src.database import get_setting
 
 _THE_FORGE_REGION_ID = 10000002
 
@@ -484,6 +486,13 @@ class AccountingToolScreen:
             self.current_sell_orders = data['sell_orders']
             self.current_buy_orders = data['buy_orders']
 
+            # Delete file if setting is enabled
+            if get_setting('auto_delete_log_files', 'true') == 'true':
+                try:
+                    os.remove(file_path)
+                except OSError as oe:
+                    print(f"Could not delete log file: {oe}")
+
             # Update UI
             async def update_ui():
                 await self.update_ui_with_data()
@@ -672,7 +681,6 @@ class AccountingToolScreen:
             self.stop_file_monitoring()
 
         # Get market logs directory from settings
-        from src.database import get_setting
         from settings import MARKETLOGS_DIR
 
         marketlogs_dir = get_setting('marketlogs_dir', MARKETLOGS_DIR)

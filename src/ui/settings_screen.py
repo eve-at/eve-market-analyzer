@@ -25,6 +25,12 @@ class SettingsScreen:
             hint_text="Path to EVE Online market logs folder"
         )
 
+        auto_delete_value = get_setting('auto_delete_log_files', 'true')
+        self.auto_delete_checkbox = ft.Checkbox(
+            label="Auto-delete log files after processing",
+            value=auto_delete_value == 'true',
+        )
+
         # Buttons
         self.save_button = ft.ElevatedButton(
             "Save",
@@ -51,6 +57,8 @@ class SettingsScreen:
 
                 # Application settings section
                 self.marketlogs_dir_field,
+                ft.Container(height=5),
+                self.auto_delete_checkbox,
 
                 # Save button
                 ft.Row([
@@ -68,6 +76,7 @@ class SettingsScreen:
         try:
             # Save marketlogs directory to global settings
             save_setting('marketlogs_dir', self.marketlogs_dir_field.value)
+            save_setting('auto_delete_log_files', 'true' if self.auto_delete_checkbox.value else 'false')
 
             self.status_text.value = "Settings saved successfully!"
             self.status_text.color = ft.Colors.GREEN

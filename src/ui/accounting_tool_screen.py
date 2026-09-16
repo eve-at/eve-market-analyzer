@@ -1,5 +1,6 @@
 """Accounting Tool screen UI component"""
 import os
+import time
 import flet as ft
 import threading
 import requests
@@ -473,6 +474,9 @@ class AccountingToolScreen:
     def on_export_file_created(self, file_path, _, item_name):
         """Callback when new export file is detected"""
         print(f"Processing export file: {file_path}")
+
+        # Wait briefly for EVE to finish writing the file before parsing
+        time.sleep(0.5)
 
         try:
             # Parse the file

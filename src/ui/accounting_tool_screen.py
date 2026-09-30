@@ -490,6 +490,14 @@ class AccountingToolScreen:
             self.current_sell_orders = data['sell_orders']
             self.current_buy_orders = data['buy_orders']
 
+            # No buy orders: estimate max buy as half of sell price
+            if self.current_max_buy is None and self.current_min_sell is not None:
+                self.current_max_buy = self.current_min_sell / 2
+
+            # No sell orders: use 0 (will be copied to clipboard as-is)
+            if self.current_min_sell is None:
+                self.current_min_sell = 0
+
             # Delete file if setting is enabled
             if get_setting('auto_delete_log_files', 'true') == 'true':
                 try:
@@ -544,8 +552,11 @@ class AccountingToolScreen:
 
         # Calculate next ticks (show without decimals in display, but keep decimals for clipboard)
         if self.current_min_sell is not None:
-            next_sell = get_next_sell_tick(self.current_min_sell)
-            self.min_sell_field.value = format_price_display(next_sell)
+            if self.current_min_sell == 0:
+                self.min_sell_field.value = "0"
+            else:
+                next_sell = get_next_sell_tick(self.current_min_sell)
+                self.min_sell_field.value = format_price_display(next_sell)
         else:
             self.min_sell_field.value = "N/A"
 
@@ -563,7 +574,7 @@ class AccountingToolScreen:
 
     def update_calculations(self):
         """Update all calculated fields"""
-        if self.current_min_sell is None or self.current_max_buy is None:
+        if self.current_min_sell is None or self.current_min_sell == 0 or self.current_max_buy is None:
             return
 
         # Get next tick prices
@@ -658,17 +669,18 @@ class AccountingToolScreen:
         Args:
             price_type: "sell" or "buy". If None, uses current radio value
         """
-        if self.current_min_sell is None or self.current_max_buy is None:
-            return
-
         # Use provided price_type or fall back to radio value
         if price_type is None:
             price_type = self.price_to_copy_radio.value
 
         price_to_copy = None
         if price_type == "sell":
-            price_to_copy = get_next_sell_tick(self.current_min_sell)
+            if self.current_min_sell is None:
+                return
+            price_to_copy = 0.0 if self.current_min_sell == 0 else get_next_sell_tick(self.current_min_sell)
         else:
+            if self.current_max_buy is None:
+                return
             price_to_copy = get_next_buy_tick(self.current_max_buy)
 
         if price_to_copy is not None:

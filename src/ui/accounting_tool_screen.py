@@ -214,6 +214,13 @@ class AccountingToolScreen:
             color=ft.Colors.GREY_600
         )
 
+        # Window coordinates (bottom-left overlay)
+        self.coords_text = ft.Text(
+            "",
+            size=11,
+            color=ft.Colors.GREY_400,
+        )
+
         # Main container
         self.container = ft.Container(
             content=ft.Column([
@@ -725,6 +732,23 @@ class AccountingToolScreen:
             finally:
                 self.observer = None
 
+    def update_window_coords(self, left, top):
+        """Update the window coordinates overlay (called from position monitor thread)."""
+        new_val = f"x: {left}  y: {top}"
+        if self.coords_text.value != new_val:
+            self.coords_text.value = new_val
+            self.page.update()
+
     def build(self):
         """Build and return the UI container"""
-        return self.container
+        return ft.Stack(
+            [
+                self.container,
+                ft.Container(
+                    content=self.coords_text,
+                    left=8,
+                    bottom=8,
+                ),
+            ],
+            expand=True,
+        )

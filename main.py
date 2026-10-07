@@ -1,9 +1,28 @@
 """EVE Online Market Helper - Main Entry Point"""
+import asyncio
+import asyncio.proactor_events
 import flet as ft
 import subprocess
 import sys
 import os
 import ctypes
+import ctypes.wintypes
+
+
+def _patch_proactor_shutdown():
+    """Suppress spurious ConnectionResetError when asyncio ProactorEventLoop shuts down on Windows."""
+    _orig = asyncio.proactor_events._ProactorBasePipeTransport._call_connection_lost
+
+    def _patched(self, exc):
+        try:
+            _orig(self, exc)
+        except (ConnectionResetError, OSError):
+            pass
+
+    asyncio.proactor_events._ProactorBasePipeTransport._call_connection_lost = _patched
+
+
+_patch_proactor_shutdown()
 from src.ui import (
     InitScreen,
     WelcomeScreen,
@@ -16,13 +35,26 @@ from src.ui import (
     RestockingScreen,
 )
 from src.app import EVEMarketApp
-from src.database import load_regions_and_items, create_tables, get_setting
+from src.database import load_regions_and_items, create_tables, get_setting, save_setting
 from src.database.models import get_current_character_id, get_character
 from src.services import WalletAutoSync
 from settings import MARKETLOGS_DIR
 
 ACCOUNTING_TOOL_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", ".accounting_tool.lock")
 ACCOUNTING_TOOL_WINDOW_TITLE = "EVE Accounting Tool"
+
+
+def _window_position_on_screen(left, top):
+    """Return True if (left, top) falls within the virtual screen (all monitors)."""
+    try:
+        user32 = ctypes.windll.user32
+        vx = user32.GetSystemMetrics(76)   # SM_XVIRTUALSCREEN
+        vy = user32.GetSystemMetrics(77)   # SM_YVIRTUALSCREEN
+        vw = user32.GetSystemMetrics(78)   # SM_CXVIRTUALSCREEN
+        vh = user32.GetSystemMetrics(79)   # SM_CYVIRTUALSCREEN
+        return vx <= left < vx + vw and vy <= top < vy + vh
+    except Exception:
+        return False
 
 
 class MainApp:
@@ -32,8 +64,15 @@ class MainApp:
         self.page = page
         self.page.title = "EVE Online Market Helper"
         self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.page.window.width = 1000
-        self.page.window.height = 800
+        self.page.window.width = int(get_setting('window_main_width', '1000'))
+        self.page.window.height = int(get_setting('window_main_height', '800'))
+        saved_left = get_setting('window_main_left', None)
+        saved_top = get_setting('window_main_top', None)
+        if saved_left is not None and saved_top is not None:
+            left, top = int(float(saved_left)), int(float(saved_top))
+            if _window_position_on_screen(left, top):
+                self.page.window.left = left
+                self.page.window.top = top
 
         # Auto-sync service (runs for the lifetime of the app)
         self.wallet_auto_sync = WalletAutoSync()
@@ -436,6 +475,18 @@ class MainApp:
             self.wallet_auto_sync.set_status_callback(self.app_bar.set_sync_status)
 
     def _on_app_close(self, _):
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, self.page.title)
+            if hwnd:
+                rect = ctypes.wintypes.RECT()
+                if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    save_setting('window_main_left', str(rect.left))
+                    save_setting('window_main_top', str(rect.top))
+                    save_setting('window_main_width', str(rect.right - rect.left))
+                    save_setting('window_main_height', str(rect.bottom - rect.top))
+        except Exception:
+            pass
         try:
             if self.accounting_tool_process and self.accounting_tool_process.poll() is None:
                 self.accounting_tool_process.kill()

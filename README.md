@@ -14,6 +14,7 @@ A comprehensive desktop application for EVE Online traders featuring market anal
 - ✅ **Profit Reports** - By month, by day, by item; calculated via FIFO from real wallet transactions
 - ✅ **Transactions Tab** - Browse the last 200 individual buy/sell events with item names and totals
 - ✅ **Courier Path Finder** - Optimal delivery route planner with in-game route setting via API
+- ✅ **Hub Hauling** - Find items to instant-buy in one trade hub and instant-sell in another, with cargo, budget and risk limits and a ready cargo plan for Multibuy
 - ✅ **Integrated Settings** - Customize broker fees, taxes, and paths
 - ✅ **Automatic Data Import** - Built-in static data management from Fuzzwork
 - ✅ **Smart Autocomplete** - Fast region and item search

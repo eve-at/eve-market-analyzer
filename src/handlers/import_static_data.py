@@ -274,6 +274,8 @@ def import_static_data(callback=None):
         cursor.execute("DELETE FROM stations")
         cursor.execute("DELETE FROM solar_systems")
         cursor.execute("DELETE FROM solar_system_jumps")
+        # Packaged volume cache (Hub Hauling) is rebuilt from ESI on demand
+        cursor.execute("DROP TABLE IF EXISTS type_packaged_volume")
         log("Tables cleared")
         log("")
 

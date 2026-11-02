@@ -46,6 +46,12 @@ class MainMenu:
                 "icon": ft.Icons.SHOPPING_CART,
                 "description": "Items you traded before but need to restock",
                 "key": "restocking_list"
+            },
+            {
+                "title": "Hub Hauling",
+                "icon": ft.Icons.LOCAL_SHIPPING,
+                "description": "Buy in one hub, haul and sell instantly in another",
+                "key": "hub_hauling"
             }
         ]
 
@@ -72,7 +78,7 @@ class MainMenu:
                         )
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=10,
-                    width=240,
+                    width=200,
                     height=160,
                     ink=True,
                     on_click=lambda e, key=item["key"]: self.on_menu_select(key)
@@ -99,17 +105,15 @@ class MainMenu:
                     text_align=ft.TextAlign.CENTER
                 ),
                 ft.Container(height=30),
-                ft.Row([
-                    menu_cards[0],
-                    menu_cards[1],
-                    menu_cards[2],
-                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
+                ft.Row(
+                    menu_cards[:4],
+                    alignment=ft.MainAxisAlignment.CENTER, spacing=20
+                ),
                 ft.Container(height=20),
-                ft.Row([
-                    menu_cards[3],
-                    menu_cards[4],
-                    menu_cards[5],
-                ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
+                ft.Row(
+                    menu_cards[4:],
+                    alignment=ft.MainAxisAlignment.CENTER, spacing=20
+                ),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             padding=20,
             expand=True

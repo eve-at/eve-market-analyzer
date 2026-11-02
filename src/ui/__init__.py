@@ -11,6 +11,7 @@ from .app_bar import AppBar
 from .accounting_tool_screen import AccountingToolScreen
 from .courier_path_finder_screen import CourierPathFinderScreen
 from .restocking_screen import RestockingScreen
+from .hub_hauling_screen import HubHaulingScreen
 
 __all__ = [
     'AutoCompleteField',
@@ -25,4 +26,5 @@ __all__ = [
     'AccountingToolScreen',
     'CourierPathFinderScreen',
     'RestockingScreen',
+    'HubHaulingScreen',
 ]

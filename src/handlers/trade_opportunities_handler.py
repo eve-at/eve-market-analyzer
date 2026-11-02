@@ -131,6 +131,13 @@ def update_orders(region_id, callback=None):
             conn.commit()
         except Exception:
             pass  # Column already exists
+        # Tables created by older versions named the range column `range_type`
+        cursor.execute(f"PRAGMA table_info([{table_name}])")
+        columns = [row[1] for row in cursor.fetchall()]
+        if 'range_type' in columns and 'range' not in columns:
+            cursor.execute(f"ALTER TABLE [{table_name}] RENAME COLUMN range_type TO range")
+            conn.commit()
+            log("Renamed column range_type to range")
         log(f"Table {table_name} ready")
         log("")
 

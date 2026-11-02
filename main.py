@@ -33,6 +33,7 @@ from src.ui import (
     AppBar,
     CourierPathFinderScreen,
     RestockingScreen,
+    HubHaulingScreen,
 )
 from src.app import EVEMarketApp
 from src.database import load_regions_and_items, create_tables, get_setting, save_setting
@@ -89,6 +90,7 @@ class MainApp:
         self.accounting_tool_process = None
         self.courier_path_finder_screen = None
         self.restocking_screen = None
+        self.hub_hauling_screen = None
 
         # App bar
         self.app_bar = None
@@ -186,6 +188,8 @@ class MainApp:
             self.show_courier_path_finder()
         elif menu_key == "restocking_list":
             self.show_restocking()
+        elif menu_key == "hub_hauling":
+            self.show_hub_hauling()
 
     def show_update_data_screen(self):
         """Show update static data screen"""
@@ -410,6 +414,34 @@ class MainApp:
             ft.Column([
                 self.app_bar.get(),
                 ft.Container(content=self.courier_path_finder_screen.build(), expand=True)
+            ], spacing=0, expand=True)
+        )
+        self.page.update()
+
+    def show_hub_hauling(self):
+        """Show hub hauling screen"""
+        self.page.controls.clear()
+
+        # Create app bar with back button
+        self.app_bar = AppBar(
+            self.page,
+            on_character_click=self.show_character,
+            on_settings_click=self.show_settings,
+            on_title_click=self.show_main_menu,
+            show_back_button=True,
+            on_back_click=self.show_main_menu
+        )
+        self._connect_sync_to_appbar()
+
+        self.hub_hauling_screen = HubHaulingScreen(
+            page=self.page,
+            on_back_callback=self.show_main_menu
+        )
+
+        self.page.add(
+            ft.Column([
+                self.app_bar.get(),
+                ft.Container(content=self.hub_hauling_screen.build(), expand=True)
             ], spacing=0, expand=True)
         )
         self.page.update()

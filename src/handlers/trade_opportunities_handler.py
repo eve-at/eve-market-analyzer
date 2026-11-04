@@ -239,6 +239,106 @@ def update_orders(region_id, callback=None):
             log("Database connection closed")
 
 
+def get_daily_history(conn, region_id, type_ids, log):
+    """
+    Get 30-day average daily order count and volume for types in a region
+
+    Uses history_{region_id} as a cache (entries younger than 3 days),
+    otherwise fetches market history from ESI.
+
+    Parameters:
+    conn - SQLite connection
+    region_id - EVE Online region ID
+    type_ids - list of type IDs
+    log - logging function
+
+    Returns:
+    dict {type_id: (daily_orders, daily_volume)} - zeros if history is unavailable
+    """
+    cursor = conn.cursor()
+    history_table = f"history_{region_id}"
+
+    # Create history table if not exists
+    log(f"Creating table {history_table} if not exists...")
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS [{history_table}] (
+            type_id INTEGER PRIMARY KEY,
+            order_count INTEGER DEFAULT NULL,
+            volume INTEGER DEFAULT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    log(f"Table {history_table} ready")
+    log("")
+
+    history = {}
+    for idx, type_id in enumerate(type_ids, 1):
+        if idx % 10 == 0 or idx == 1:
+            log(f"Processing {idx}/{len(type_ids)}: type_id {type_id}")
+
+        # Check if data exists in history table (created within last 3 days)
+        cursor.execute(f"""
+            SELECT order_count, volume
+            FROM [{history_table}]
+            WHERE type_id = ? AND julianday('now') - julianday(created_at) < 3
+        """, (type_id,))
+
+        history_row = cursor.fetchone()
+
+        if history_row:
+            # Use existing history data
+            daily_orders = history_row[0]
+            daily_volume = history_row[1]
+        else:
+            # Fetch from API and calculate averages
+            try:
+                api_url = f"https://esi.evetech.net/latest/markets/{region_id}/history/?datasource=tranquility&type_id={type_id}"
+                response = requests.get(api_url, timeout=10)
+
+                if response.status_code == 200:
+                    history_data = response.json()
+
+                    # Get last 30 days and calculate averages
+                    if len(history_data) > 0:
+                        last_30_days = history_data[-30:] if len(history_data) >= 30 else history_data
+
+                        total_orders = sum(day.get('order_count', 0) for day in last_30_days)
+                        total_volume = sum(day.get('volume', 0) for day in last_30_days)
+
+                        daily_orders = round(total_orders / len(last_30_days))
+                        daily_volume = round(total_volume / len(last_30_days))
+
+                        # Insert or update history table
+                        cursor.execute(f"""
+                            INSERT INTO [{history_table}] (type_id, order_count, volume, created_at)
+                            VALUES (?, ?, ?, datetime('now'))
+                            ON CONFLICT(type_id) DO UPDATE SET
+                                order_count = excluded.order_count,
+                                volume = excluded.volume,
+                                created_at = datetime('now')
+                        """, (type_id, daily_orders, daily_volume))
+                    else:
+                        daily_orders = 0
+                        daily_volume = 0
+                else:
+                    log(f"  Warning: API request failed for type_id {type_id} (status {response.status_code})")
+                    daily_orders = 0
+                    daily_volume = 0
+
+                # Small delay to avoid rate limiting
+                time.sleep(0.1)
+
+            except Exception as e:
+                log(f"  Error fetching history for type_id {type_id}: {e}")
+                daily_orders = 0
+                daily_volume = 0
+
+        history[type_id] = (daily_orders, daily_volume)
+
+    conn.commit()
+    return history
+
+
 def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_percent,
                       max_profit_percent, min_daily_quantity, max_competitors=None,
                       selected_market_groups=None, callback=None):
@@ -270,7 +370,6 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
 
         orders_table = f"orders_{region_id}"
         opportunities_table = f"opportunities_{region_id}"
-        history_table = f"history_{region_id}"
 
         # Check if orders table exists
         cursor.execute("""
@@ -284,18 +383,6 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
             log("Please click 'Update Orders' first")
             return None
 
-        # Create history table if not exists
-        log(f"Creating table {history_table} if not exists...")
-        cursor.execute(f"""
-            CREATE TABLE IF NOT EXISTS [{history_table}] (
-                type_id INTEGER PRIMARY KEY,
-                order_count INTEGER DEFAULT NULL,
-                volume INTEGER DEFAULT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-        log(f"Table {history_table} ready")
-        log("")
 
         # Check if orders table has data
         cursor.execute(f"SELECT COUNT(*) as cnt FROM [{orders_table}]")
@@ -417,67 +504,8 @@ def find_opportunities(region_id, min_sell_price, max_buy_price, min_profit_perc
         log("")
 
         log("Populating daily statistics from history...")
-        for idx, type_id in enumerate(type_ids, 1):
-            if idx % 10 == 0 or idx == 1:
-                log(f"Processing {idx}/{len(type_ids)}: type_id {type_id}")
-
-            # Check if data exists in history table (created within last 3 days)
-            cursor.execute(f"""
-                SELECT order_count, volume
-                FROM [{history_table}]
-                WHERE type_id = ? AND julianday('now') - julianday(created_at) < 3
-            """, (type_id,))
-
-            history_row = cursor.fetchone()
-
-            if history_row:
-                # Use existing history data
-                daily_orders = history_row[0]
-                daily_volume = history_row[1]
-            else:
-                # Fetch from API and calculate averages
-                try:
-                    api_url = f"https://esi.evetech.net/latest/markets/{region_id}/history/?datasource=tranquility&type_id={type_id}"
-                    response = requests.get(api_url, timeout=10)
-
-                    if response.status_code == 200:
-                        history_data = response.json()
-
-                        # Get last 30 days and calculate averages
-                        if len(history_data) > 0:
-                            last_30_days = history_data[-30:] if len(history_data) >= 30 else history_data
-
-                            total_orders = sum(day.get('order_count', 0) for day in last_30_days)
-                            total_volume = sum(day.get('volume', 0) for day in last_30_days)
-
-                            daily_orders = round(total_orders / len(last_30_days))
-                            daily_volume = round(total_volume / len(last_30_days))
-
-                            # Insert or update history table
-                            cursor.execute(f"""
-                                INSERT INTO [{history_table}] (type_id, order_count, volume, created_at)
-                                VALUES (?, ?, ?, datetime('now'))
-                                ON CONFLICT(type_id) DO UPDATE SET
-                                    order_count = excluded.order_count,
-                                    volume = excluded.volume,
-                                    created_at = datetime('now')
-                            """, (type_id, daily_orders, daily_volume))
-                        else:
-                            daily_orders = 0
-                            daily_volume = 0
-                    else:
-                        log(f"  Warning: API request failed for type_id {type_id} (status {response.status_code})")
-                        daily_orders = 0
-                        daily_volume = 0
-
-                    # Small delay to avoid rate limiting
-                    time.sleep(0.1)
-
-                except Exception as e:
-                    log(f"  Error fetching history for type_id {type_id}: {e}")
-                    daily_orders = 0
-                    daily_volume = 0
-
+        history = get_daily_history(conn, region_id, type_ids, log)
+        for type_id, (daily_orders, daily_volume) in history.items():
             # Update opportunities table with daily statistics
             cursor.execute(f"""
                 UPDATE [{opportunities_table}]

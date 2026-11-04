@@ -11,6 +11,48 @@ WALLET_CACHE_SECONDS = 3605
 _ESI_PAGE_SIZE = 2500
 
 
+def ensure_valid_access_token(character, esi_api, log=None):
+    """Refresh the character's access token if it is missing or expired.
+
+    Returns:
+        Character dict with a valid access_token (saved to DB if refreshed).
+
+    Raises:
+        RuntimeError if the token cannot be refreshed.
+    """
+    access_token = character.get('access_token')
+    refresh_token = character.get('refresh_token')
+    token_expiry = character.get('token_expiry')
+
+    if token_expiry and isinstance(token_expiry, str):
+        try:
+            token_expiry = datetime.fromisoformat(token_expiry)
+        except ValueError:
+            token_expiry = None
+    if access_token and token_expiry and datetime.now() < token_expiry:
+        return character
+
+    if log:
+        log("Access token expired, refreshing...")
+    if not refresh_token:
+        raise RuntimeError("No refresh token. Please log in again.")
+    token_data = esi_api.refresh_access_token(refresh_token)
+    if not token_data:
+        raise RuntimeError("Failed to refresh token. Please log in again.")
+    save_character({
+        'character_id': character['character_id'],
+        'character_name': character['character_name'],
+        'access_token': token_data['access_token'],
+        'token_expiry': token_data['token_expiry'],
+    })
+    character = dict(character)
+    character['access_token'] = token_data['access_token']
+    character['token_expiry'] = token_data['token_expiry']
+    if log:
+        log("Token refreshed.")
+    return character
+
+
 def pull_wallet_transactions(character, log=None):
     """Fetch new wallet transactions from ESI and update profit tables.
 
@@ -32,36 +74,10 @@ def pull_wallet_transactions(character, log=None):
             log(msg)
 
     character_id = character['character_id']
-    access_token = character.get('access_token')
-    refresh_token = character.get('refresh_token')
-    token_expiry = character.get('token_expiry')
-
     esi_api = ESIAPI()
 
-    # Refresh token if needed
-    if token_expiry and isinstance(token_expiry, str):
-        try:
-            token_expiry = datetime.fromisoformat(token_expiry)
-        except ValueError:
-            token_expiry = None
-    if not access_token or not token_expiry or datetime.now() >= token_expiry:
-        _log("Access token expired, refreshing...")
-        if not refresh_token:
-            raise RuntimeError("No refresh token. Please log in again.")
-        token_data = esi_api.refresh_access_token(refresh_token)
-        if not token_data:
-            raise RuntimeError("Failed to refresh token. Please log in again.")
-        access_token = token_data['access_token']
-        save_character({
-            'character_id': character_id,
-            'character_name': character['character_name'],
-            'access_token': access_token,
-            'token_expiry': token_data['token_expiry'],
-        })
-        character = dict(character)
-        character['access_token'] = access_token
-        character['token_expiry'] = token_data['token_expiry']
-        _log("Token refreshed.")
+    character = ensure_valid_access_token(character, esi_api, log)
+    access_token = character['access_token']
 
     # Determine import mode
     max_known_id = get_max_wallet_transaction_id(character_id)

@@ -9,23 +9,25 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 
-# Trade hubs (https://wiki.eveuniversity.org/Trade_hubs).
-# Station IDs are resolved from the `stations` table by exact station name.
+# Trade hubs (https://wiki.eveuniversity.org/Trade_hubs): (hub name, station ID).
+# Stations are resolved by ID: CCP renames stations (e.g. "Jita IV - Moon 4" became
+# "Jita 4 - Moon 4" in the 2026 static data), IDs stay the same.
 TRADE_HUBS = [
-    ("Jita", "Jita IV - Moon 4 - Caldari Navy Assembly Plant"),
-    ("Amarr", "Amarr VIII (Oris) - Emperor Family Academy"),
-    ("Dodixie", "Dodixie IX - Moon 20 - Federation Navy Assembly Plant"),
-    ("Rens", "Rens VI - Moon 8 - Brutor Tribe Treasury"),
-    ("Hek", "Hek VIII - Moon 12 - Boundless Creation Factory"),
-    ("Oursulaert", "Oursulaert III - Federation Navy Testing Facilities"),
-    ("Tash-Murkon Prime", "Tash-Murkon Prime II - Moon 1 - Kaalakiota Corporation Factory"),
-    ("Agil", "Agil VI - Moon 2 - CONCORD Logistic Support"),
+    ("Jita", 60003760),               # Jita IV - Moon 4 - Caldari Navy Assembly Plant
+    ("Amarr", 60008494),              # Amarr VIII (Oris) - Emperor Family Academy
+    ("Dodixie", 60011866),            # Dodixie IX - Moon 20 - Federation Navy Assembly Plant
+    ("Rens", 60004588),               # Rens VI - Moon 8 - Brutor Tribe Treasury
+    ("Hek", 60005686),                # Hek VIII - Moon 12 - Boundless Creation Factory
+    ("Oursulaert", 60011740),         # Oursulaert III - Federation Navy Testing Facilities
+    ("Tash-Murkon Prime", 60001096),  # Tash-Murkon Prime II - Moon 1 - Kaalakiota Corporation Factory
+    ("Agil", 60012412),               # Agil VI - Moon 2 - CONCORD Logistic Support
 ]
 
 LIMIT_MARKET = "market"
 LIMIT_CARGO = "cargo"
 LIMIT_BUDGET = "budget"
 LIMIT_RISK = "risk"
+LIMIT_DEMAND = "demand"
 
 # Float tolerance for volume / ISK comparisons
 _EPS = 1e-6
@@ -53,7 +55,7 @@ def resolve_hubs():
 
     Returns:
     list of dicts with keys: name, station_name, station_id, solar_system_id,
-    region_id, region_name. IDs are None if the station was not found.
+    region_id, region_name, corporation_id. IDs are None if the station was not found.
     """
     settings = _get_settings()
     conn = None
@@ -64,12 +66,12 @@ def resolve_hubs():
         cursor = conn.cursor()
         placeholders = ', '.join(['?'] * len(TRADE_HUBS))
         cursor.execute(f"""
-            SELECT s.stationID, s.stationName, s.solarSystemID, s.regionID, r.regionName
+            SELECT s.stationID, s.stationName, s.solarSystemID, s.regionID, s.corporationID, r.regionName
             FROM stations s
             LEFT JOIN regions r ON r.regionID = s.regionID
-            WHERE s.stationName IN ({placeholders})
-        """, [station_name for _, station_name in TRADE_HUBS])
-        found = {row['stationName']: dict(row) for row in cursor.fetchall()}
+            WHERE s.stationID IN ({placeholders})
+        """, [station_id for _, station_id in TRADE_HUBS])
+        found = {row['stationID']: dict(row) for row in cursor.fetchall()}
     except Exception as e:
         print(f"Database error while resolving trade hubs: {e}")
     finally:
@@ -77,15 +79,16 @@ def resolve_hubs():
             conn.close()
 
     hubs = []
-    for name, station_name in TRADE_HUBS:
-        row = found.get(station_name)
+    for name, station_id in TRADE_HUBS:
+        row = found.get(station_id)
         hubs.append({
             'name': name,
-            'station_name': station_name,
+            'station_name': row['stationName'] if row else None,
             'station_id': row['stationID'] if row else None,
             'solar_system_id': row['solarSystemID'] if row else None,
             'region_id': row['regionID'] if row else None,
             'region_name': row['regionName'] if row else None,
+            'corporation_id': row['corporationID'] if row else None,
         })
     return hubs
 
@@ -229,7 +232,7 @@ def _summarize(taken):
     }
 
 
-def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=None):
+def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=None, max_qty=None):
     """
     Take chunks in order until the first limit is hit (the last chunk may be cut)
 
@@ -239,6 +242,7 @@ def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=Non
     cargo_m3 - ship cargo capacity, m3
     budget - max ISK to spend, None = unlimited
     max_cargo_value - max ISK value of cargo on board, None = unlimited
+    max_qty - max units the destination market can absorb, None = unlimited
 
     Returns:
     dict with qty, investment, revenue, profit, margin, max_buy_price,
@@ -247,6 +251,7 @@ def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=Non
     taken = []
     used_m3 = 0.0
     spent = 0.0
+    taken_qty = 0
     limited_by = LIMIT_MARKET
 
     for chunk in chunks:
@@ -255,6 +260,7 @@ def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=Non
             (LIMIT_CARGO, _max_units(cargo_m3 - used_m3, unit_volume)),
             (LIMIT_BUDGET, _max_units(None if budget is None else budget - spent, price)),
             (LIMIT_RISK, _max_units(None if max_cargo_value is None else max_cargo_value - spent, price)),
+            (LIMIT_DEMAND, math.inf if max_qty is None else max(max_qty - taken_qty, 0)),
         ]
         limit_name, limit_units = min(caps, key=lambda c: c[1])
         q = min(chunk['qty'], limit_units)
@@ -263,6 +269,7 @@ def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=Non
             taken.append({**chunk, 'qty': q})
             used_m3 += q * unit_volume
             spent += q * price
+            taken_qty += q
 
         if q < chunk['qty']:
             limited_by = limit_name
@@ -275,13 +282,50 @@ def apply_limits(chunks, unit_volume, cargo_m3, budget=None, max_cargo_value=Non
     return result
 
 
-def build_cargo_plan(deals, cargo_m3, budget=None, max_cargo_value=None):
+def _fill_cargo(candidates, cargo_m3, isk_cap, excluded, max_items):
+    """One greedy pass over sorted chunk candidates; returns {type_id: entry}"""
+    used_m3 = 0.0
+    spent = 0.0
+    by_type = {}
+
+    for _, deal, chunk in candidates:
+        type_id = deal['type_id']
+        if type_id in excluded:
+            continue
+        entry = by_type.get(type_id)
+        if entry is None:
+            if max_items is not None and len(by_type) >= max_items:
+                continue
+            entry = {'deal': deal, 'chunks': [], 'qty': 0}
+        max_qty = deal.get('max_qty')
+        q = min(
+            chunk['qty'],
+            _max_units(cargo_m3 - used_m3, deal['unit_volume']),
+            _max_units(None if isk_cap is None else isk_cap - spent, chunk['buy_price']),
+            math.inf if max_qty is None else max_qty - entry['qty'],
+        )
+        if q <= 0:
+            continue
+        used_m3 += q * deal['unit_volume']
+        spent += q * chunk['buy_price']
+        entry['chunks'].append({**chunk, 'qty': q})
+        entry['qty'] += q
+        by_type[type_id] = entry
+
+    return by_type
+
+
+def build_cargo_plan(deals, cargo_m3, budget=None, max_cargo_value=None, min_investment=0, max_items=None):
     """
     Greedy two-resource knapsack (m3 and ISK) over market chunks of all deals
 
     Parameters:
     deals - list of dicts with keys type_id, typeName, unit_volume, market_chunks
+            and optional max_qty (units the destination market can absorb)
     cargo_m3, budget, max_cargo_value - limits as in apply_limits
+    min_investment - items the plan would buy for less ISK are dropped and the
+                     freed cargo / ISK is given to other items
+    max_items - max number of different items in the plan, None = unlimited
 
     Returns:
     dict with items (list), volume, investment, revenue, profit, margin
@@ -302,23 +346,19 @@ def build_cargo_plan(deals, cargo_m3, budget=None, max_cargo_value=None):
     # Stable sort keeps chunks of one item in their original (decreasing profit) order on ties
     candidates.sort(key=lambda c: -c[0])
 
-    used_m3 = 0.0
-    spent = 0.0
-    by_type = {}
+    # Refill without items that ended up below the minimum investment until none are left
+    excluded = set()
+    while True:
+        by_type = _fill_cargo(candidates, cargo_m3, isk_cap, excluded, max_items)
+        too_small = {
+            type_id for type_id, entry in by_type.items()
+            if sum(c['qty'] * c['buy_price'] for c in entry['chunks']) < min_investment
+        }
+        if not too_small:
+            break
+        excluded |= too_small
 
-    for _, deal, chunk in candidates:
-        q = min(
-            chunk['qty'],
-            _max_units(cargo_m3 - used_m3, deal['unit_volume']),
-            _max_units(None if isk_cap is None else isk_cap - spent, chunk['buy_price']),
-        )
-        if q <= 0:
-            continue
-        used_m3 += q * deal['unit_volume']
-        spent += q * chunk['buy_price']
-        entry = by_type.setdefault(deal['type_id'], {'deal': deal, 'chunks': []})
-        entry['chunks'].append({**chunk, 'qty': q})
-
+    used_m3 = sum(entry['qty'] * entry['deal']['unit_volume'] for entry in by_type.values())
     items = []
     for type_id, entry in by_type.items():
         item = _summarize(entry['chunks'])
@@ -337,6 +377,18 @@ def build_cargo_plan(deals, cargo_m3, budget=None, max_cargo_value=None):
         'profit': totals['profit'],
         'margin': totals['margin'],
     }
+
+
+def trip_hours(jumps, seconds_per_jump, overhead_minutes):
+    """One-way trip duration in hours"""
+    return jumps * seconds_per_jump / 3600.0 + overhead_minutes / 60.0
+
+
+def isk_per_hour(profit, hours):
+    """Profit per hour, None if the duration is unknown or zero"""
+    if not hours or hours <= 0:
+        return None
+    return profit / hours
 
 
 def format_multibuy(items):
@@ -415,6 +467,48 @@ def get_packaged_volumes(conn, type_volumes, log):
     return volumes
 
 
+HIGH_SEC_MIN_SECURITY = 0.45  # Systems shown in game as 0.5 and above
+
+_route_graphs = {}  # {safest: adjacency dict}
+_route_cache = {}   # {(from, to, safest): jumps or None}
+
+
+def get_route_jumps(from_system_id, to_system_id, safest):
+    """
+    Number of jumps between two solar systems
+
+    Parameters:
+    safest - True to use only high-sec systems, False for the shortest route
+
+    Returns:
+    int jumps, or None if there is no route
+    """
+    from src.handlers.courier_path_handler import build_jump_graph, dijkstra_shortest_path
+
+    key = (from_system_id, to_system_id, safest)
+    if key in _route_cache:
+        return _route_cache[key]
+
+    if safest not in _route_graphs:
+        graph = build_jump_graph()
+        if safest:
+            settings = _get_settings()
+            conn = _get_connection(settings)
+            try:
+                security = dict(conn.execute("SELECT solarSystemID, security FROM solar_systems").fetchall())
+            finally:
+                conn.close()
+            high_sec = {s for s, sec in security.items() if sec is not None and sec >= HIGH_SEC_MIN_SECURITY}
+            graph = {s: [n for n in neighbours if n in high_sec] for s, neighbours in graph.items() if s in high_sec}
+        _route_graphs[safest] = graph
+
+    distance, _ = dijkstra_shortest_path(_route_graphs[safest], from_system_id, to_system_id)
+    jumps = None if distance == math.inf else distance
+    _route_cache[key] = jumps
+    _route_cache[(to_system_id, from_system_id, safest)] = jumps
+    return jumps
+
+
 def _ensure_orders_index(cursor, region_id):
     """Create index for hub order lookups if not exists"""
     cursor.execute(f"""
@@ -479,7 +573,7 @@ def _find_candidates(cursor, src, dst, tax_rate, market_group_ids):
 
 def find_hub_deals(hub_a, hub_b, cargo_m3, budget, max_cargo_value,
                    min_profit, min_margin, market_group_ids, sales_tax_percent,
-                   callback=None):
+                   min_investment=0, max_plan_items=None, max_margin=None, callback=None):
     """
     Find instant buy -> haul -> instant sell deals between two hubs in both directions
 
@@ -491,6 +585,10 @@ def find_hub_deals(hub_a, hub_b, cargo_m3, budget, max_cargo_value,
     min_margin - min margin per deal row, %
     market_group_ids - list of top market group IDs, empty = all
     sales_tax_percent - character sales tax, % (7.5 for 7.5%)
+    min_investment - min ISK to spend on one item (deal row and cargo plan)
+    max_margin - max margin per deal row, %; higher margins usually mean a thin or
+                 inflated market, None = no limit
+    max_plan_items - max number of different items in the cargo plan, None = unlimited
     callback - optional callback function for progress messages
 
     Returns:
@@ -558,7 +656,9 @@ def find_hub_deals(hub_a, hub_b, cargo_m3, budget, max_cargo_value,
                     continue
 
                 row = apply_limits(market_chunks, unit_volume, cargo_m3, budget, max_cargo_value)
-                if row['qty'] == 0 or row['profit'] < min_profit or row['margin'] < min_margin:
+                if (row['qty'] == 0 or row['profit'] < min_profit or row['margin'] < min_margin
+                        or row['investment'] < min_investment
+                        or (max_margin is not None and row['margin'] > max_margin)):
                     continue
 
                 row.update({
@@ -572,7 +672,8 @@ def find_hub_deals(hub_a, hub_b, cargo_m3, budget, max_cargo_value,
                 })
                 direction_deals.append(row)
 
-            plans[key] = build_cargo_plan(direction_deals, cargo_m3, budget, max_cargo_value)
+            plans[key] = build_cargo_plan(direction_deals, cargo_m3, budget, max_cargo_value,
+                                          min_investment, max_plan_items)
             plans[key]['direction_label'] = label
             log(f"[{label}] {len(direction_deals)} deal(s), cargo plan profit: {plans[key]['profit']:,.0f} ISK")
             log("")
@@ -592,9 +693,12 @@ def find_hub_deals(hub_a, hub_b, cargo_m3, budget, max_cargo_value,
             conn.close()
 
 
-def export_deals_to_csv(deals, callback=None):
+def export_deals_to_csv(deals, callback=None, fieldnames=None):
     """
     Export hauling deals to CSV file
+
+    Parameters:
+    fieldnames - deal keys to export, default: Instant mode columns
 
     Returns:
     str - file path, or None on error
@@ -617,9 +721,9 @@ def export_deals_to_csv(deals, callback=None):
 
         log(f"Writing {len(deals)} deals to {filepath}...")
 
-        fieldnames = ['direction_label', 'type_id', 'typeName', 'qty', 'volume', 'max_buy_price',
-                      'min_sell_price', 'investment', 'revenue', 'profit', 'margin',
-                      'profit_per_m3', 'limited_by']
+        fieldnames = fieldnames or ['direction_label', 'type_id', 'typeName', 'qty', 'volume', 'max_buy_price',
+                                    'min_sell_price', 'investment', 'revenue', 'profit', 'margin',
+                                    'profit_per_m3', 'limited_by']
         with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
             writer.writeheader()

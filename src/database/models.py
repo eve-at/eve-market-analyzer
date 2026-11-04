@@ -2,6 +2,7 @@
 import sqlite3
 import os
 import importlib
+from datetime import datetime
 
 
 def _get_db_path():
@@ -57,6 +58,44 @@ def create_tables():
             )
         """)
         print("Table 'settings' created or already exists")
+
+        # Character standings and skills (synced from ESI, used for broker fee)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS character_standings (
+                character_id INTEGER NOT NULL,
+                from_id INTEGER NOT NULL,
+                from_type TEXT NOT NULL,
+                standing REAL NOT NULL,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY (character_id, from_id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS character_skills (
+                character_id INTEGER NOT NULL,
+                skill_id INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                fetched_at TEXT NOT NULL,
+                PRIMARY KEY (character_id, skill_id)
+            )
+        """)
+        print("Tables 'character_standings', 'character_skills' created or already exist")
+
+        # NPC corporations and factions (from Fuzzwork, used for broker fee)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS npc_corporations (
+                corporation_id INTEGER PRIMARY KEY,
+                name TEXT,
+                faction_id INTEGER
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS factions (
+                faction_id INTEGER PRIMARY KEY,
+                name TEXT
+            )
+        """)
+        print("Tables 'npc_corporations', 'factions' created or already exist")
 
         conn.commit()
         return True
@@ -1065,5 +1104,137 @@ def get_wallet_transactions(character_id, limit=200):
     except Exception as e:
         print(f"Error fetching wallet transactions for display: {e}")
         return []
+    finally:
+        conn.close()
+
+
+def save_character_standings_and_skills(character_id, standings, skills):
+    """Replace stored standings and skills of a character with fresh ESI data
+
+    Args:
+        standings: list of {from_id, from_type, standing} from ESI
+        skills: list of {skill_id, active_skill_level, ...} from ESI
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        fetched_at = datetime.now().isoformat(timespec='seconds')
+
+        cursor.execute("DELETE FROM character_standings WHERE character_id = ?", (character_id,))
+        cursor.executemany("""
+            INSERT INTO character_standings (character_id, from_id, from_type, standing, fetched_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, [(character_id, s['from_id'], s['from_type'], s['standing'], fetched_at) for s in standings])
+
+        cursor.execute("DELETE FROM character_skills WHERE character_id = ?", (character_id,))
+        cursor.executemany("""
+            INSERT INTO character_skills (character_id, skill_id, level, fetched_at)
+            VALUES (?, ?, ?, ?)
+        """, [(character_id, s['skill_id'], s['active_skill_level'], fetched_at) for s in skills])
+
+        conn.commit()
+        return True
+
+    except Exception as e:
+        print(f"Error while saving standings and skills: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_character_skill_levels(character_id, skill_ids):
+    """Get active levels of given skills
+
+    Returns:
+        tuple: ({skill_id: level}, fetched_at) - levels of untrained skills are 0,
+        fetched_at is None if skills were never synced
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT skill_id, level, fetched_at FROM character_skills WHERE character_id = ?
+        """, (character_id,))
+        rows = cursor.fetchall()
+        if not rows:
+            return {skill_id: 0 for skill_id in skill_ids}, None
+        levels = {row['skill_id']: row['level'] for row in rows}
+        return {skill_id: levels.get(skill_id, 0) for skill_id in skill_ids}, rows[0]['fetched_at']
+
+    except Exception as e:
+        print(f"Error while getting skills of character {character_id}: {e}")
+        return {skill_id: 0 for skill_id in skill_ids}, None
+    finally:
+        conn.close()
+
+
+def get_corporation_standings(character_id, corporation_id):
+    """Get standings of a character towards an NPC corporation and its faction
+
+    Returns:
+        dict with corp_name, corp_standing, faction_id, faction_name, faction_standing
+        (standings are 0 if absent), or None if the corporation is unknown
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.name AS corp_name, c.faction_id, f.name AS faction_name,
+                   cs.standing AS corp_standing, fs.standing AS faction_standing
+            FROM npc_corporations c
+            LEFT JOIN factions f ON f.faction_id = c.faction_id
+            LEFT JOIN character_standings cs
+                ON cs.character_id = ? AND cs.from_id = c.corporation_id AND cs.from_type = 'npc_corp'
+            LEFT JOIN character_standings fs
+                ON fs.character_id = ? AND fs.from_id = c.faction_id AND fs.from_type = 'faction'
+            WHERE c.corporation_id = ?
+        """, (character_id, character_id, corporation_id))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result['corp_standing'] = result['corp_standing'] or 0.0
+        result['faction_standing'] = result['faction_standing'] or 0.0
+        return result
+
+    except Exception as e:
+        print(f"Error while getting standings for corporation {corporation_id}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def count_npc_corporations():
+    """Number of NPC corporations stored"""
+    try:
+        conn = _get_connection()
+        return conn.execute("SELECT COUNT(*) FROM npc_corporations").fetchone()[0]
+    except Exception as e:
+        print(f"Error while counting NPC corporations: {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+def save_npc_corporations_and_factions(corporations, factions):
+    """Replace NPC corporations and factions
+
+    Args:
+        corporations: list of (corporation_id, name, faction_id)
+        factions: list of (faction_id, name)
+    """
+    try:
+        conn = _get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM npc_corporations")
+        cursor.executemany("INSERT INTO npc_corporations (corporation_id, name, faction_id) VALUES (?, ?, ?)", corporations)
+        cursor.execute("DELETE FROM factions")
+        cursor.executemany("INSERT INTO factions (faction_id, name) VALUES (?, ?)", factions)
+        conn.commit()
+        return True
+
+    except Exception as e:
+        print(f"Error while saving NPC corporations: {e}")
+        return False
     finally:
         conn.close()

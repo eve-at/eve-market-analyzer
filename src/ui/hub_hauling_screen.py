@@ -8,15 +8,28 @@ from src.handlers.hub_hauling_handler import (
     find_hub_deals,
     export_deals_to_csv,
     format_multibuy,
+    get_route_jumps,
+    trip_hours,
+    isk_per_hour,
 )
+from src.handlers.hub_trading_handler import find_hub_trading_deals
 from src.handlers.trade_opportunities_handler import update_orders
+from src.handlers.fees import get_trade_skills, get_hub_broker_fee, ADVANCED_BROKER_RELATIONS_SKILL_ID
 from src.database import load_top_market_groups, get_setting, save_setting
 from src.database.models import get_current_character_id, get_character
 from src.utils.price_calculator import format_price_display
 
 
 DEFAULT_SALES_TAX = 7.50
+DEFAULT_BROKER_FEE = 3.00
 STALE_ORDERS_MINUTES = 30
+
+MODE_INSTANT = "instant"
+MODE_TRADING = "trading"
+MODE_DESCRIPTIONS = {
+    MODE_INSTANT: "Buy from sell orders in one hub, haul and sell instantly to buy orders in another",
+    MODE_TRADING: "Buy from sell orders in one hub, haul and place your own sell orders in another",
+}
 
 # Orders update state shared by all screen instances: the update keeps running
 # in background when the user leaves the screen, and a reopened screen follows it
@@ -46,6 +59,86 @@ def _format_isk(value):
     return f"{value:,.0f}"
 
 
+def _format_hours(hours):
+    """Format duration in hours as '1 h 50 min' / '55 min'"""
+    minutes = int(round(hours * 60))
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60} min"
+
+
+def _format_daily_volume(value):
+    """Daily volume with decimals only for small numbers"""
+    return f"{value:,.1f}" if value < 10 else f"{value:,.0f}"
+
+
+def _direction_text(deal):
+    """'Jita → Amarr'"""
+    return deal['direction_label'].replace(" -> ", " → ")
+
+
+# Deals table columns per mode: (header, sort key, cell text, numeric, header tooltip).
+# The "Item" column cell is rendered separately (clickable name).
+_INSTANT_COLUMNS = [
+    ("Direction", lambda d: d['direction_label'], _direction_text, False, None),
+    ("Item", lambda d: d['typeName'].lower(), None, False, None),
+    ("Qty", lambda d: d['qty'], lambda d: f"{d['qty']:,}", True, None),
+    ("m³", lambda d: d['volume'], lambda d: f"{d['volume']:,.1f}", True, "Volume, m³"),
+    ("Max Buy", lambda d: d['max_buy_price'], lambda d: format_price_display(d['max_buy_price']), True,
+     "Max buy price: the highest sell order price to buy up to in the source hub"),
+    ("Avg Buy", lambda d: d['investment'] / d['qty'], lambda d: format_price_display(d['investment'] / d['qty']), True,
+     "Average buy price"),
+    ("Min Sell", lambda d: d['min_sell_price'], lambda d: format_price_display(d['min_sell_price']), True,
+     "Lowest buy order price we sell into in the destination hub"),
+    ("Investment", lambda d: d['investment'], lambda d: _format_isk(d['investment']), True, None),
+    ("Revenue", lambda d: d['revenue'], lambda d: _format_isk(d['revenue']), True, "Revenue after sales tax"),
+    ("Profit", lambda d: d['profit'], lambda d: _format_isk(d['profit']), True, None),
+    ("Margin %", lambda d: d['margin'], lambda d: f"{d['margin']:.1f}", True, None),
+    ("Profit/m³", lambda d: d['profit_per_m3'], lambda d: _format_isk(d['profit_per_m3']), True, None),
+    ("Limit", lambda d: d['limited_by'], lambda d: d['limited_by'], False, "What limited the quantity"),
+]
+
+_TRADING_COLUMNS = [
+    ("Direction", lambda d: d['direction_label'], _direction_text, False, None),
+    ("Item", lambda d: d['typeName'].lower(), None, False, None),
+    ("Qty", lambda d: d['qty'], lambda d: f"{d['qty']:,}", True, None),
+    ("m³", lambda d: d['volume'], lambda d: f"{d['volume']:,.1f}", True, "Volume, m³"),
+    ("Max Buy", lambda d: d['max_buy_price'], lambda d: format_price_display(d['max_buy_price']), True,
+     "Max buy price: the highest sell order price to buy up to in the source hub"),
+    ("Sell", lambda d: d['sell_price'],
+     lambda d: format_price_display(d['sell_price']) + (" *" if d['price_capped'] else ""), True,
+     "Price of your sell order in the destination hub (* = capped by 30-day average price)"),
+    ("Investment", lambda d: d['investment'], lambda d: _format_isk(d['investment']), True, None),
+    ("Fees", lambda d: d['fees'], lambda d: _format_isk(d['fees']), True, "Broker fee + relists + sales tax"),
+    ("Profit", lambda d: d['profit'], lambda d: _format_isk(d['profit']), True, None),
+    ("Margin %", lambda d: d['margin'], lambda d: f"{d['margin']:.1f}", True, None),
+    ("Daily Vol", lambda d: d['daily_volume'], lambda d: _format_daily_volume(d['daily_volume']), True,
+     "Average units traded per day in the destination region (30 days)"),
+    ("Comp.", lambda d: d['competitors'], lambda d: str(d['competitors']), True,
+     "Competitors: sell orders in the destination hub updated in the last 2 days"),
+    ("Share %", lambda d: d['market_share'], lambda d: f"{d['market_share']:.0f}", True,
+     "Expected share of daily volume: Market share, but not more than an equal split with competitors"),
+    ("Days", lambda d: d['days_to_sell'], lambda d: f"{d['days_to_sell']:.1f}", True, "Expected days to sell"),
+    ("Profit/m³", lambda d: d['profit_per_m3'], lambda d: _format_isk(d['profit_per_m3']), True, None),
+    ("Limit", lambda d: d['limited_by'], lambda d: d['limited_by'], False, "What limited the quantity"),
+]
+
+DEALS_TEXT_SIZE = 11
+ITEM_COLUMN_WIDTH = 200
+
+_COLUMNS = {MODE_INSTANT: _INSTANT_COLUMNS, MODE_TRADING: _TRADING_COLUMNS}
+
+_TRADING_CSV_FIELDS = ['direction_label', 'type_id', 'typeName', 'qty', 'volume', 'max_buy_price',
+                       'sell_price', 'price_capped', 'avg_price_dst', 'best_ask_dst', 'best_bid_dst',
+                       'investment', 'fees', 'revenue', 'profit', 'margin', 'daily_volume',
+                       'days_to_sell', 'competitors', 'profit_per_m3', 'limited_by']
+
+
+def _profit_column_index(mode):
+    """Index of the Profit column (default sort) for a mode"""
+    return next(i for i, column in enumerate(_COLUMNS[mode]) if column[0] == "Profit")
+
+
 class HubHaulingScreen:
     """Screen for finding hauling deals between two trade hubs"""
 
@@ -59,37 +152,52 @@ class HubHaulingScreen:
         self.hubs_by_name = {h['name']: h for h in self.hubs}
         missing_hubs = len(all_hubs) - len(self.hubs)
 
+        # Mode
+        self.mode = get_setting('hub_hauling_mode', MODE_INSTANT)
+        if self.mode not in _COLUMNS:
+            self.mode = MODE_INSTANT
+
         # Results data for sorting and pagination
         self.deals_data = []
         self.plans = {}
+        self.results_mode = self.mode
+        self.trip = None
         self.direction_filter = "all"
-        self.sort_column_index = 9  # Default sort by profit
+        self.sort_column_index = _profit_column_index(self.mode)
         self.sort_ascending = False
         self.current_page = 0
-        self.rows_per_page = 50
+        self.rows_per_page = 20
         self.clicked_rows = set()  # Track clicked (direction, type_id)
         self.active_tab = "deals"
 
-        # Character sales tax
+        # Character sales tax, broker fee fallback and trade skills
         self.sales_tax = DEFAULT_SALES_TAX
-        character = None
-        character_id = get_current_character_id()
-        if character_id:
-            character = get_character(character_id)
-        if character and character.get('sales_tax') is not None:
-            self.sales_tax = float(character['sales_tax'])
-            sales_tax_text = f"Sales tax: {self.sales_tax:.2f}% (from EVE Online Account)"
-            sales_tax_color = ft.Colors.GREY_700
-        else:
-            sales_tax_text = f"Sales tax: {self.sales_tax:.2f}% (default - log in on EVE Online Account to use your character's tax)"
-            sales_tax_color = ft.Colors.ORANGE
+        self.broker_fee_fallback = DEFAULT_BROKER_FEE
+        self.character_id = get_current_character_id()
+        character = get_character(self.character_id) if self.character_id else None
+        if character:
+            if character.get('sales_tax') is not None:
+                self.sales_tax = float(character['sales_tax'])
+            if character.get('broker_fee_sell') is not None:
+                self.broker_fee_fallback = float(character['broker_fee_sell'])
+        self.has_character = character is not None
+        self.advanced_broker_relations = 0
+        if self.character_id:
+            levels, _ = get_trade_skills(self.character_id)
+            self.advanced_broker_relations = levels[ADVANCED_BROKER_RELATIONS_SKILL_ID]
 
-        self.sales_tax_text = ft.Text(
-            sales_tax_text,
-            size=11,
-            color=sales_tax_color,
-            tooltip="Both trades are instant: buying from sell orders and selling to buy orders pay no broker fee, only sales tax"
+        self.sales_tax_text = ft.Text("", size=11)
+
+        # Mode selection
+        self.mode_radio = ft.RadioGroup(
+            value=self.mode,
+            on_change=self.on_mode_changed,
+            content=ft.Row([
+                ft.Radio(value=MODE_INSTANT, label="Instant (sell to buy orders)"),
+                ft.Radio(value=MODE_TRADING, label="Trading (place sell orders)"),
+            ], spacing=20)
         )
+        self.mode_description_text = ft.Text(MODE_DESCRIPTIONS[self.mode], size=11, color=ft.Colors.GREY_700)
 
         # Hub selection
         hub_names = [h['name'] for h in self.hubs]
@@ -127,12 +235,41 @@ class HubHaulingScreen:
             visible=missing_hubs > 0
         )
 
-        # Parameter fields
+        # Parameter fields (both modes)
         self.cargo_field = self._number_field("Cargo capacity, m³", get_setting('hub_hauling_cargo', '60000'))
         self.budget_field = self._number_field("Budget, ISK (empty = no limit)", get_setting('hub_hauling_budget', ''))
         self.max_value_field = self._number_field("Max cargo value, ISK (empty = no limit)", get_setting('hub_hauling_max_value', ''))
         self.min_profit_field = self._number_field("Min profit per item, ISK", get_setting('hub_hauling_min_profit', '1000000'))
         self.min_margin_field = self._number_field("Min margin, %", get_setting('hub_hauling_min_margin', '5'))
+        self.max_margin_field = self._number_field("Max margin, % (empty = no limit)", get_setting('hub_hauling_max_margin', '100'))
+        self.max_margin_field.tooltip = "Very high margins usually mean a thin market or inflated prices in the destination"
+        self.min_investment_field = self._number_field("Min investment per item, ISK", get_setting('hub_hauling_min_investment', '1000000'))
+        self.max_plan_items_field = self._number_field("Max items in cargo plan", get_setting('hub_hauling_max_plan_items', '50'))
+        self.time_per_jump_field = self._number_field("Time per jump, sec", get_setting('hub_hauling_time_per_jump', '60'))
+        self.overhead_field = self._number_field("Overhead per trip, min", get_setting('hub_hauling_overhead', '10'))
+
+        self.route_radio = ft.RadioGroup(
+            value=get_setting('hub_hauling_route', 'safest'),
+            content=ft.Row([
+                ft.Text("Route:", size=12),
+                ft.Radio(value="safest", label="Safest (high-sec only)"),
+                ft.Radio(value="shortest", label="Shortest"),
+            ], spacing=10)
+        )
+
+        # Parameter fields (Trading mode only)
+        self.max_days_field = self._number_field("Max days to sell", get_setting('hub_hauling_max_days', '7'))
+        self.market_share_field = self._number_field("Market share, %", get_setting('hub_hauling_market_share', '20'))
+        self.relists_field = self._number_field("Expected relists", get_setting('hub_hauling_relists', '2'))
+        self.max_competitors_field = self._number_field("Max competitors", get_setting('hub_hauling_max_competitors', '10'))
+        self.max_competitors_field.tooltip = ("Sell orders in the destination hub updated in the last 2 days. "
+                                              "Empty = no limit. Your market share is also limited to an equal "
+                                              "split with competitors")
+        self.trading_fields_row = ft.Row(
+            [self.max_days_field, self.market_share_field, self.relists_field, self.max_competitors_field],
+            spacing=8,
+            visible=self.mode == MODE_TRADING
+        )
 
         # Market groups
         self.market_groups = load_top_market_groups()
@@ -169,11 +306,13 @@ class HubHaulingScreen:
             padding=5
         )
 
-        # Buttons and orders status under each hub
+        # Buttons, orders status and broker fee under each hub
         self.update_a_button = self._update_orders_button("a")
         self.update_b_button = self._update_orders_button("b")
         self.hub_a_status_text = ft.Text("", size=11, width=200)
         self.hub_b_status_text = ft.Text("", size=11, width=200)
+        self.hub_a_fee_text = ft.Text("", size=11, width=200)
+        self.hub_b_fee_text = ft.Text("", size=11, width=200)
 
         self.find_deals_button = ft.ElevatedButton(
             "Find Deals",
@@ -236,12 +375,7 @@ class HubHaulingScreen:
         self.plan_content = ft.Column(expand=True, visible=False, scroll=ft.ScrollMode.AUTO)
 
         self.results_container = ft.Container(
-            content=ft.Text(
-                "Select two hubs and click 'Find Deals' to search for hauling opportunities",
-                size=14,
-                color=ft.Colors.GREY_600,
-                text_align=ft.TextAlign.CENTER
-            ),
+            content=self._results_placeholder(),
             padding=20,
             expand=True
         )
@@ -254,17 +388,21 @@ class HubHaulingScreen:
             controls=[
                 ft.Container(
                     content=ft.Column([
+                        self.mode_radio,
+                        ft.Container(height=5),
                         ft.Row([
                             ft.Column([
                                 self.hub_a_dropdown,
                                 self.update_a_button,
                                 self.hub_a_status_text,
+                                self.hub_a_fee_text,
                             ], spacing=5),
                             ft.Container(content=self.swap_button, padding=ft.padding.only(top=2)),
                             ft.Column([
                                 self.hub_b_dropdown,
                                 self.update_b_button,
                                 self.hub_b_status_text,
+                                self.hub_b_fee_text,
                             ], spacing=5),
                         ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.START),
                         self.hubs_warning_text,
@@ -276,13 +414,16 @@ class HubHaulingScreen:
                                     ft.Text("Parameters", size=12, weight=ft.FontWeight.BOLD),
                                     ft.Container(height=2),
                                     ft.Column([
-                                        ft.Row([self.cargo_field], spacing=8),
+                                        ft.Row([self.cargo_field, self.max_plan_items_field], spacing=8),
                                         ft.Row([self.budget_field, self.max_value_field], spacing=8),
-                                        ft.Row([self.min_profit_field, self.min_margin_field], spacing=8),
+                                        ft.Row([self.min_profit_field, self.min_investment_field], spacing=8),
+                                        ft.Row([self.min_margin_field, self.max_margin_field], spacing=8),
+                                        self.trading_fields_row,
+                                        ft.Row([self.time_per_jump_field, self.overhead_field], spacing=8),
                                     ], spacing=15),
-                                    ft.Container(height=3),
+                                    self.route_radio,
                                     self.sales_tax_text,
-                                ], spacing=0),
+                                ], spacing=3),
                                 expand=1
                             ),
                             # Right column - Market Groups
@@ -312,11 +453,7 @@ class HubHaulingScreen:
                     weight=ft.FontWeight.BOLD
                 ),
                 ft.Container(height=1),
-                ft.Text(
-                    "Buy from sell orders in one hub, haul and sell instantly to buy orders in another",
-                    size=11,
-                    color=ft.Colors.GREY_700
-                ),
+                self.mode_description_text,
                 ft.Container(height=3),
                 self.filter_accordion,
                 ft.Container(height=3),
@@ -328,6 +465,7 @@ class HubHaulingScreen:
             expand=True
         )
 
+        self._refresh_mode_texts()
         self.refresh_orders_status(update=False)
         self._attach_to_running_update()
 
@@ -378,6 +516,15 @@ class HubHaulingScreen:
             ink=True
         )
 
+    def _results_placeholder(self):
+        """Hint shown before the first search"""
+        return ft.Text(
+            "Select two hubs and click 'Find Deals' to search for hauling opportunities",
+            size=14,
+            color=ft.Colors.GREY_600,
+            text_align=ft.TextAlign.CENTER
+        )
+
     def _selected_hubs(self):
         """Return (hub_a, hub_b) dicts"""
         return self.hubs_by_name.get(self.hub_a_name), self.hubs_by_name.get(self.hub_b_name)
@@ -404,6 +551,7 @@ class HubHaulingScreen:
         self.hub_a_dropdown.disabled = busy
         self.hub_b_dropdown.disabled = busy
         self.swap_button.disabled = busy
+        self.mode_radio.disabled = busy
 
     def _show_snackbar(self, message):
         """Show snackbar notification"""
@@ -413,6 +561,73 @@ class HubHaulingScreen:
         )
         self.page.snack_bar.open = True
         self.page.update()
+
+    def _hub_broker_fee(self, hub):
+        """Broker fee info for placing an order in a hub"""
+        return get_hub_broker_fee(self.character_id, hub['corporation_id'], self.broker_fee_fallback)
+
+    # ------------------------------------------------------------------
+    # Mode
+    # ------------------------------------------------------------------
+
+    def on_mode_changed(self, e):
+        """Switch between Instant and Trading modes"""
+        self.mode = e.control.value
+        save_setting('hub_hauling_mode', self.mode)
+
+        # Results of the other mode have different columns
+        self.deals_data = []
+        self.plans = {}
+        self.sort_column_index = _profit_column_index(self.mode)
+        self.sort_ascending = False
+        self.results_container.content = self._results_placeholder()
+        self.results_container.visible = True
+        self.export_button.visible = False
+        self.status_text.value = ""
+
+        self._refresh_mode_texts()
+        self.page.update()
+
+    def _refresh_mode_texts(self):
+        """Show fields and texts relevant for the current mode"""
+        trading = self.mode == MODE_TRADING
+        self.mode_description_text.value = MODE_DESCRIPTIONS[self.mode]
+        self.trading_fields_row.visible = trading
+        self.hub_a_fee_text.visible = trading
+        self.hub_b_fee_text.visible = trading
+
+        if self.has_character:
+            self.sales_tax_text.value = f"Sales tax: {self.sales_tax:.3f}".rstrip('0').rstrip('.') + "% (from EVE Online Account)"
+            self.sales_tax_text.color = ft.Colors.GREY_700
+        else:
+            self.sales_tax_text.value = (f"Sales tax: {self.sales_tax:.2f}% "
+                                         "(default - log in on EVE Online Account to use your character's tax)")
+            self.sales_tax_text.color = ft.Colors.ORANGE
+        self.sales_tax_text.tooltip = (
+            "Buying from sell orders pays no broker fee. Your sell order pays the destination hub broker fee, "
+            "relist fees and sales tax" if trading else
+            "Both trades are instant: buying from sell orders and selling to buy orders pay no broker fee, only sales tax"
+        )
+
+        self._refresh_broker_fees()
+
+    def _refresh_broker_fees(self):
+        """Show broker fee under each hub (Trading mode)"""
+        for hub, fee_text in zip(self._selected_hubs(), (self.hub_a_fee_text, self.hub_b_fee_text)):
+            if not hub:
+                fee_text.value = ""
+                continue
+            fee = self._hub_broker_fee(hub)
+            if fee['source'] == 'esi':
+                fee_text.value = f"Broker fee: {fee['fee_percent']:.3f}".rstrip('0').rstrip('.') + "%"
+                fee_text.tooltip = (f"Broker Relations {fee['broker_relations']}, "
+                                    f"{fee['faction_name']} {fee['faction_standing']:.2f}, "
+                                    f"{fee['corp_name']} {fee['corp_standing']:.2f}")
+                fee_text.color = ft.Colors.GREY_700
+            else:
+                fee_text.value = f"Broker fee: {fee['fee_percent']:.2f}% (manual)"
+                fee_text.tooltip = "Click Sync Standings & Skills on EVE Online Account to calculate broker fee per hub"
+                fee_text.color = ft.Colors.ORANGE
 
     # ------------------------------------------------------------------
     # Hubs and orders status
@@ -433,6 +648,7 @@ class HubHaulingScreen:
         self.hub_b_dropdown.value = self.hub_b_name
         save_setting('hub_hauling_hub_a', self.hub_a_name)
         save_setting('hub_hauling_hub_b', self.hub_b_name)
+        self._refresh_broker_fees()
         self.refresh_orders_status()
 
     def on_swap_hubs(self, _):
@@ -570,6 +786,12 @@ class HubHaulingScreen:
         else:
             self.selected_market_group_ids.discard(group_id)
 
+    def _show_error(self, message):
+        """Show validation error in status"""
+        self.status_text.value = message
+        self.status_text.color = ft.Colors.RED
+        self.page.update()
+
     def on_find_deals(self, _):
         """Validate parameters and run deal search"""
         hub_a, hub_b = self._selected_hubs()
@@ -582,24 +804,39 @@ class HubHaulingScreen:
             max_cargo_value = _parse_number(self.max_value_field.value)
             min_profit = _parse_number(self.min_profit_field.value) or 0
             min_margin = _parse_number(self.min_margin_field.value) or 0
+            seconds_per_jump = _parse_number(self.time_per_jump_field.value) or 0
+            overhead_minutes = _parse_number(self.overhead_field.value) or 0
+            max_days = _parse_number(self.max_days_field.value) or 0
+            market_share = _parse_number(self.market_share_field.value) or 0
+            relists = _parse_number(self.relists_field.value) or 0
+            max_competitors = _parse_number(self.max_competitors_field.value)
+            min_investment = _parse_number(self.min_investment_field.value) or 0
+            max_margin = _parse_number(self.max_margin_field.value)
+            max_plan_items = _parse_number(self.max_plan_items_field.value)
+            max_plan_items = int(max_plan_items) if max_plan_items else None
         except ValueError:
-            self.status_text.value = "Please enter valid numbers in all fields"
-            self.status_text.color = ft.Colors.RED
-            self.page.update()
+            self._show_error("Please enter valid numbers in all fields")
             return
 
         if not cargo_m3 or cargo_m3 <= 0:
-            self.status_text.value = "Cargo capacity must be greater than 0"
-            self.status_text.color = ft.Colors.RED
-            self.page.update()
+            self._show_error("Cargo capacity must be greater than 0")
+            return
+        if self.mode == MODE_TRADING and (max_days <= 0 or market_share <= 0):
+            self._show_error("Max days to sell and market share must be greater than 0")
             return
 
         # Remember parameters between launches
-        save_setting('hub_hauling_cargo', self.cargo_field.value.strip())
-        save_setting('hub_hauling_budget', self.budget_field.value.strip())
-        save_setting('hub_hauling_max_value', self.max_value_field.value.strip())
-        save_setting('hub_hauling_min_profit', self.min_profit_field.value.strip())
-        save_setting('hub_hauling_min_margin', self.min_margin_field.value.strip())
+        for name, field in (('cargo', self.cargo_field), ('budget', self.budget_field),
+                            ('max_value', self.max_value_field), ('min_profit', self.min_profit_field),
+                            ('min_margin', self.min_margin_field), ('time_per_jump', self.time_per_jump_field),
+                            ('overhead', self.overhead_field), ('max_days', self.max_days_field),
+                            ('market_share', self.market_share_field), ('relists', self.relists_field),
+                            ('max_competitors', self.max_competitors_field),
+                            ('min_investment', self.min_investment_field),
+                            ('max_margin', self.max_margin_field),
+                            ('max_plan_items', self.max_plan_items_field)):
+            save_setting(f'hub_hauling_{name}', field.value.strip())
+        save_setting('hub_hauling_route', self.route_radio.value)
         save_setting('hub_hauling_market_groups', ','.join(str(g) for g in sorted(self.selected_market_group_ids)))
 
         self.log_column.controls.clear()
@@ -610,14 +847,34 @@ class HubHaulingScreen:
         self.status_text.color = ft.Colors.BLUE
         self.page.update()
 
+        mode = self.mode
         market_group_ids = list(self.selected_market_group_ids)
+        safest = self.route_radio.value == 'safest'
+        broker_fees = {hub['name']: self._hub_broker_fee(hub)['fee_percent'] for hub in (hub_a, hub_b)}
 
         def search_thread():
-            result = find_hub_deals(
-                hub_a, hub_b, cargo_m3, budget, max_cargo_value,
-                min_profit, min_margin, market_group_ids, self.sales_tax,
-                callback=self.log_progress
-            )
+            if mode == MODE_TRADING:
+                result = find_hub_trading_deals(
+                    hub_a, hub_b, cargo_m3, budget, max_cargo_value,
+                    min_profit, min_margin, market_group_ids, self.sales_tax,
+                    broker_fees, self.advanced_broker_relations, relists, max_days, market_share,
+                    max_competitors=max_competitors, min_investment=min_investment,
+                    max_plan_items=max_plan_items, max_margin=max_margin, callback=self.log_progress
+                )
+            else:
+                result = find_hub_deals(
+                    hub_a, hub_b, cargo_m3, budget, max_cargo_value,
+                    min_profit, min_margin, market_group_ids, self.sales_tax,
+                    min_investment=min_investment, max_plan_items=max_plan_items,
+                    max_margin=max_margin, callback=self.log_progress
+                )
+
+            jumps = get_route_jumps(hub_a['solar_system_id'], hub_b['solar_system_id'], safest)
+            trip = {
+                'jumps': jumps,
+                'safest': safest,
+                'hours': trip_hours(jumps, seconds_per_jump, overhead_minutes) if jumps is not None else None,
+            }
 
             async def update_after_search():
                 self._set_busy(False)
@@ -633,17 +890,19 @@ class HubHaulingScreen:
                     self.status_text.value = f"Found {len(result['deals'])} deals"
                     self.status_text.color = ft.Colors.GREEN
                     self.export_button.visible = True
-                    self.display_results(result)
+                    self.display_results(result, mode, trip)
                 self.page.update()
 
             self.page.run_task(update_after_search)
 
         threading.Thread(target=search_thread, daemon=True).start()
 
-    def display_results(self, result):
+    def display_results(self, result, mode, trip):
         """Store results and show tabs"""
         self.deals_data = result['deals']
         self.plans = result['plans']
+        self.results_mode = mode
+        self.trip = trip
         self.clicked_rows = set()
         self.current_page = 0
         self._sort_deals()
@@ -677,26 +936,10 @@ class HubHaulingScreen:
     # Deals tab
     # ------------------------------------------------------------------
 
-    # Order: Direction, Item, Qty, Volume, Max Buy, Avg Buy, Min Sell, Investment, Revenue, Profit, Margin, Profit/m3, Limited By
-    _sort_keys = [
-        lambda d: d['direction_label'],
-        lambda d: d['typeName'].lower(),
-        lambda d: d['qty'],
-        lambda d: d['volume'],
-        lambda d: d['max_buy_price'],
-        lambda d: d['investment'] / d['qty'],
-        lambda d: d['min_sell_price'],
-        lambda d: d['investment'],
-        lambda d: d['revenue'],
-        lambda d: d['profit'],
-        lambda d: d['margin'],
-        lambda d: d['profit_per_m3'],
-        lambda d: d['limited_by'],
-    ]
-
     def _sort_deals(self):
         """Sort deals by current sort column"""
-        self.deals_data.sort(key=self._sort_keys[self.sort_column_index], reverse=not self.sort_ascending)
+        sort_key = _COLUMNS[self.results_mode][self.sort_column_index][1]
+        self.deals_data.sort(key=sort_key, reverse=not self.sort_ascending)
 
     def _filtered_deals(self):
         """Deals matching the direction filter"""
@@ -710,7 +953,8 @@ class HubHaulingScreen:
             self.sort_ascending = not self.sort_ascending
         else:
             self.sort_column_index = column_index
-            self.sort_ascending = column_index in (0, 1, 12)
+            # Text columns ascending, numbers descending by default
+            self.sort_ascending = not _COLUMNS[self.results_mode][column_index][3]
         self._sort_deals()
         self.current_page = 0
         self.update_deals_display()
@@ -744,21 +988,20 @@ class HubHaulingScreen:
 
     def update_deals_display(self):
         """Render deals table for current page"""
+        columns_spec = _COLUMNS[self.results_mode]
         deals = self._filtered_deals()
         start_idx = self.current_page * self.rows_per_page
         end_idx = min(start_idx + self.rows_per_page, len(deals))
         page_data = deals[start_idx:end_idx]
         total_pages = max((len(deals) - 1) // self.rows_per_page + 1, 1)
 
-        headers = ["Direction", "Item", "Qty", "Volume, m³", "Max Buy Price", "Avg Buy Price",
-                   "Min Sell Price", "Investment", "Revenue", "Profit", "Margin, %", "Profit / m³", "Limited By"]
         columns = [
             ft.DataColumn(
-                ft.Text(title, weight=ft.FontWeight.BOLD),
-                numeric=index not in (0, 1, 12),
+                ft.Text(header, weight=ft.FontWeight.BOLD, size=DEALS_TEXT_SIZE, tooltip=header_tooltip),
+                numeric=numeric,
                 on_sort=lambda _, i=index: self.sort_deals(i)
             )
-            for index, title in enumerate(headers)
+            for index, (header, _, _, numeric, header_tooltip) in enumerate(columns_spec)
         ]
 
         rows = []
@@ -770,27 +1013,21 @@ class HubHaulingScreen:
                 self.toggle_row_highlight(k)
                 self.page.run_task(self.copy_to_clipboard, name, "Item name")
 
-            values = [
-                deal['direction_label'],
-                None,  # Item name cell is built separately
-                f"{deal['qty']:,}",
-                f"{deal['volume']:,.1f}",
-                format_price_display(deal['max_buy_price']),
-                format_price_display(deal['investment'] / deal['qty']),
-                format_price_display(deal['min_sell_price']),
-                _format_isk(deal['investment']),
-                _format_isk(deal['revenue']),
-                _format_isk(deal['profit']),
-                f"{deal['margin']:.1f}",
-                _format_isk(deal['profit_per_m3']),
-                deal['limited_by'],
-            ]
             cells = []
-            for index, value in enumerate(values):
-                if index == 1:
-                    cells.append(ft.DataCell(ft.Text(deal['typeName'], color=ft.Colors.BLUE), on_tap=copy_name))
-                else:
-                    cells.append(ft.DataCell(ft.Text(value), on_tap=highlight))
+            for header, _, cell_text, _, _ in columns_spec:
+                if cell_text is None:
+                    cells.append(ft.DataCell(
+                        ft.Text(deal['typeName'], color=ft.Colors.BLUE, size=DEALS_TEXT_SIZE,
+                                width=ITEM_COLUMN_WIDTH, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                                tooltip=deal['typeName']),
+                        on_tap=copy_name
+                    ))
+                    continue
+                tooltip = None
+                if header == "Sell" and deal.get('price_capped'):
+                    tooltip = (f"Best sell in destination ({format_price_display(deal['best_ask_dst'])}) is far above "
+                               f"the 30-day average price - average price used")
+                cells.append(ft.DataCell(ft.Text(cell_text(deal), size=DEALS_TEXT_SIZE, tooltip=tooltip), on_tap=highlight))
 
             rows.append(ft.DataRow(
                 cells=cells,
@@ -806,8 +1043,10 @@ class HubHaulingScreen:
             horizontal_lines=ft.BorderSide(1, ft.Colors.GREY_300),
             heading_row_color=ft.Colors.GREY_200,
             heading_row_height=25,
-            data_row_min_height=30,
-            data_row_max_height=30,
+            data_row_min_height=26,
+            data_row_max_height=26,
+            column_spacing=12,
+            horizontal_margin=6,
             sort_column_index=self.sort_column_index,
             sort_ascending=self.sort_ascending,
         )
@@ -827,6 +1066,14 @@ class HubHaulingScreen:
             size=12
         )
 
+        if self.results_mode == MODE_TRADING:
+            hint = ("Max Buy: the highest sell order price to buy up to in the source hub. "
+                    "Sell: your order price in the destination (* = capped by 30-day average). "
+                    "Profit is after broker fee, relists and sales tax. Hover headers for details, click item name to copy it.")
+        else:
+            hint = ("Max Buy: the highest sell order price to buy up to in the source hub. "
+                    "Hover headers for details, click item name to copy it.")
+
         self.deals_content.controls = [
             ft.Column([
                 ft.Row([
@@ -834,11 +1081,7 @@ class HubHaulingScreen:
                     ft.Container(width=20),
                     self.direction_radio,
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ft.Text(
-                    "Max Buy Price is the highest sell order price to buy up to in the source hub. Click item name to copy it.",
-                    size=11,
-                    color=ft.Colors.GREY_600
-                ),
+                ft.Text(hint, size=11, color=ft.Colors.GREY_600),
                 ft.Container(height=5),
                 ft.Container(
                     content=ft.Row([data_table], scroll=ft.ScrollMode.AUTO, expand=True),
@@ -854,8 +1097,23 @@ class HubHaulingScreen:
     # Cargo plan tab
     # ------------------------------------------------------------------
 
+    def _trip_summary(self, profit):
+        """Route, trip time and ISK/h text for a plan"""
+        trip = self.trip
+        route_name = "safest" if trip['safest'] else "shortest"
+        if trip['jumps'] is None:
+            return f"Route ({route_name}): no route"
+        text = f"Route: {trip['jumps']} jumps ({route_name})   ·   Trip: {_format_hours(trip['hours'])}"
+        rate = isk_per_hour(profit, trip['hours'])
+        if rate is not None:
+            text += f"   ·   ISK/h: {_format_isk(rate)}"
+            if self.results_mode == MODE_TRADING:
+                text += " (hauling time, income delayed)"
+        return text
+
     def update_plan_display(self):
         """Render cargo plans for both directions"""
+        trading = self.results_mode == MODE_TRADING
         try:
             cargo_m3 = _parse_number(self.cargo_field.value) or 0
         except ValueError:
@@ -883,10 +1141,13 @@ class HubHaulingScreen:
                 f"Profit: {_format_isk(plan['profit'])} ISK   |   "
                 f"Margin: {plan['margin']:.1f}%"
             )
+            if trading:
+                summary += f"   |   Sell-through: up to {plan['max_days_to_sell']:.1f} days"
 
+            deal_by_type = {d['type_id']: d for d in self.deals_data if d['direction'] == key}
             rows = []
             for item in plan['items']:
-                rows.append(ft.DataRow(cells=[
+                cells = [
                     ft.DataCell(
                         ft.Text(item['typeName'], color=ft.Colors.BLUE),
                         on_tap=lambda _, name=item['typeName']: self.page.run_task(self.copy_to_clipboard, name, "Item name")
@@ -894,18 +1155,30 @@ class HubHaulingScreen:
                     ft.DataCell(ft.Text(f"{item['qty']:,}")),
                     ft.DataCell(ft.Text(f"{item['volume']:,.1f}")),
                     ft.DataCell(ft.Text(format_price_display(item['max_buy_price']))),
+                ]
+                if trading:
+                    deal = deal_by_type.get(item['type_id'], {})
+                    sell_text = format_price_display(item['min_sell_price']) + (" *" if deal.get('price_capped') else "")
+                    cells.append(ft.DataCell(ft.Text(sell_text)))
+                cells += [
                     ft.DataCell(ft.Text(_format_isk(item['investment']))),
                     ft.DataCell(ft.Text(_format_isk(item['profit']))),
-                ]))
+                ]
+                if trading:
+                    cells.append(ft.DataCell(ft.Text(f"{item['days_to_sell']:.1f}")))
+                rows.append(ft.DataRow(cells=cells))
+
+            headers = ["Item", "Qty", "Volume, m³", "Max Buy Price"]
+            if trading:
+                headers.append("Sell Price")
+            headers += ["Investment", "Profit"]
+            if trading:
+                headers.append("Days to Sell")
 
             table = ft.DataTable(
                 columns=[
-                    ft.DataColumn(ft.Text("Item", weight=ft.FontWeight.BOLD)),
-                    ft.DataColumn(ft.Text("Qty", weight=ft.FontWeight.BOLD), numeric=True),
-                    ft.DataColumn(ft.Text("Volume, m³", weight=ft.FontWeight.BOLD), numeric=True),
-                    ft.DataColumn(ft.Text("Max Buy Price", weight=ft.FontWeight.BOLD), numeric=True),
-                    ft.DataColumn(ft.Text("Investment", weight=ft.FontWeight.BOLD), numeric=True),
-                    ft.DataColumn(ft.Text("Profit", weight=ft.FontWeight.BOLD), numeric=True),
+                    ft.DataColumn(ft.Text(header, weight=ft.FontWeight.BOLD), numeric=header != "Item")
+                    for header in headers
                 ],
                 rows=rows,
                 border=ft.border.all(1, ft.Colors.GREY_400),
@@ -936,12 +1209,25 @@ class HubHaulingScreen:
                     copy_button,
                 ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Text(summary, size=12, color=ft.Colors.GREY_800, selectable=True),
+                ft.Text(self._trip_summary(plan['profit']), size=12, color=ft.Colors.GREY_800, selectable=True),
                 ft.Container(
                     content=ft.Row([table], scroll=ft.ScrollMode.AUTO),
                     padding=10,
                 ),
             ], spacing=5))
             blocks.append(ft.Divider())
+
+        # Round trip: carry the A -> B plan there and the B -> A plan back
+        plan_ab, plan_ba = self.plans.get("A->B"), self.plans.get("B->A")
+        if plan_ab and plan_ba and self.trip and self.trip['hours']:
+            hub_a, hub_b = plan_ab['direction_label'].split(" -> ")
+            round_profit = plan_ab['profit'] + plan_ba['profit']
+            round_hours = 2 * self.trip['hours']
+            blocks.append(ft.Text(
+                f"Round trip ({hub_a} → {hub_b} → {hub_a}): profit {_format_isk(round_profit)} ISK   ·   "
+                f"{_format_hours(round_hours)}   ·   ISK/h {_format_isk(isk_per_hour(round_profit, round_hours))}",
+                size=13, weight=ft.FontWeight.BOLD, selectable=True
+            ))
 
         self.plan_content.controls = blocks
 
@@ -959,8 +1245,10 @@ class HubHaulingScreen:
         self.export_button.disabled = True
         self.page.update()
 
+        fieldnames = _TRADING_CSV_FIELDS if self.results_mode == MODE_TRADING else None
+
         def export_thread():
-            filepath = export_deals_to_csv(self.deals_data)
+            filepath = export_deals_to_csv(self.deals_data, fieldnames=fieldnames)
 
             async def update_after_export():
                 self.export_button.disabled = False

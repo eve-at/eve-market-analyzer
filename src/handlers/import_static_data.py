@@ -279,6 +279,22 @@ def import_static_data(callback=None):
         log("Tables cleared")
         log("")
 
+        # Fuzzwork adds new columns over time; import only the columns our tables have
+        def known_columns(df, table):
+            cursor.execute(f"PRAGMA table_info({table})")
+            table_columns = {row[1] for row in cursor.fetchall()}
+            skipped = [c for c in df.columns if c not in table_columns]
+            if skipped:
+                log(f"  {table}: skipping new CSV columns {', '.join(skipped)}")
+            return df[[c for c in df.columns if c in table_columns]]
+
+        regions_df = known_columns(regions_df, 'regions')
+        types_df = known_columns(types_df, 'types')
+        market_groups_df = known_columns(market_groups_df, 'market_groups')
+        stations_df = known_columns(stations_df, 'stations')
+        solar_systems_df = known_columns(solar_systems_df, 'solar_systems')
+        solar_system_jumps_df = known_columns(solar_system_jumps_df, 'solar_system_jumps')
+
         # Import regions
         log("Importing regions data...")
         region_count = 0

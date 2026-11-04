@@ -13,6 +13,9 @@ from src.database.models import (
     get_wallet_transactions,
 )
 from src.handlers.wallet_handler import pull_wallet_transactions
+from src.handlers.standings_handler import sync_standings_and_skills
+from src.handlers.fees import get_trade_skills, get_hub_broker_fee
+from src.handlers.hub_hauling_handler import resolve_hubs
 
 
 class CharacterScreen:
@@ -131,6 +134,22 @@ class CharacterScreen:
             )
         )
 
+        # Sync standings & skills button (broker fee per hub, sales tax)
+        self.sync_standings_button = ft.ElevatedButton(
+            "Sync Standings & Skills",
+            on_click=self.on_sync_standings,
+            visible=bool(self.current_character),
+            tooltip="Fetch standings and trade skills from ESI to calculate broker fee per trade hub and sales tax",
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_700,
+                color=ft.Colors.WHITE,
+                padding=ft.Padding(20, 10, 20, 10)
+            )
+        )
+
+        # Broker fee per trade hub, calculated from synced standings
+        self.hub_fees_row = ft.Row(wrap=True, spacing=12, run_spacing=2, width=640)
+
         # Status text
         self.status_text = ft.Text("", size=14)
 
@@ -245,9 +264,12 @@ class CharacterScreen:
                 self.sales_tax_field
             ]),
             ft.Row([
-                self.save_button
-            ], alignment=ft.MainAxisAlignment.START)
+                self.save_button,
+                self.sync_standings_button
+            ], alignment=ft.MainAxisAlignment.START),
+            self.hub_fees_row
         ], spacing=5)
+        self._refresh_hub_fees()
 
         # Create tab contents
         self.orders_import_content = ft.Container(
@@ -453,12 +475,14 @@ class CharacterScreen:
             self.eve_login_button.visible = False
             self.logout_button.visible = True
             self.update_wallet_button.visible = True
+            self.sync_standings_button.visible = True
             self.tabs_container.visible = True
 
             # Update broker fee / sales tax fields from DB
             self.broker_fee_sell_field.value = str(character_data.get('broker_fee_sell', 3.00))
             self.broker_fee_buy_field.value = str(character_data.get('broker_fee_buy', 3.00))
             self.sales_tax_field.value = str(character_data.get('sales_tax', 7.50))
+            self._refresh_hub_fees()
 
             self.status_text.value = f"Successfully logged in as {character_data.get('character_name')}"
             self.status_text.color = ft.Colors.GREEN
@@ -481,8 +505,10 @@ class CharacterScreen:
         self.eve_login_button.visible = True
         self.logout_button.visible = False
         self.update_wallet_button.visible = False
+        self.sync_standings_button.visible = False
         self.tabs_container.visible = False
         self.log_container.visible = False
+        self._refresh_hub_fees()
 
         # Reset avatar to default
         self.character_avatar.src = "static/img/default_avatar.svg"
@@ -500,6 +526,74 @@ class CharacterScreen:
             self.on_logout_callback()
 
         self.page.update()
+
+    def _refresh_hub_fees(self):
+        """Show broker fee per trade hub from synced standings and skills"""
+        self.hub_fees_row.controls.clear()
+        if not self.current_character:
+            return
+
+        character_id = self.current_character['character_id']
+        _, fetched_at = get_trade_skills(character_id)
+        if not fetched_at:
+            self.hub_fees_row.controls.append(ft.Text(
+                "Broker fee per hub: not synced - click Sync Standings & Skills",
+                size=12, color=ft.Colors.ORANGE
+            ))
+            return
+
+        self.hub_fees_row.controls.append(ft.Text(
+            f"Broker fee per hub (synced {fetched_at.replace('T', ' ')[:16]}):",
+            size=12, color=ft.Colors.GREY_700
+        ))
+        for hub in resolve_hubs():
+            if not hub['corporation_id']:
+                continue
+            fee = get_hub_broker_fee(character_id, hub['corporation_id'], self.current_character.get('broker_fee_sell') or 3.0)
+            tooltip = None
+            if fee['source'] == 'esi':
+                tooltip = (f"Broker Relations {fee['broker_relations']}, "
+                           f"{fee['faction_name']} {fee['faction_standing']:.2f}, "
+                           f"{fee['corp_name']} {fee['corp_standing']:.2f}")
+            self.hub_fees_row.controls.append(ft.Text(
+                f"{hub['name']} {fee['fee_percent']:.3f}".rstrip('0').rstrip('.') + "%",
+                size=12, weight=ft.FontWeight.BOLD, tooltip=tooltip
+            ))
+
+    def on_sync_standings(self, _):
+        """Sync standings and skills from ESI in a background thread"""
+        if not self.current_character:
+            return
+
+        self.sync_standings_button.disabled = True
+        self.status_text.value = "Syncing standings and skills..."
+        self.status_text.color = ft.Colors.BLUE
+        self.page.update()
+
+        def _sync():
+            try:
+                updated = sync_standings_and_skills(self.current_character)
+                error = None
+            except Exception as e:
+                updated = None
+                error = str(e)
+
+            async def _done():
+                self.sync_standings_button.disabled = False
+                if updated:
+                    self.current_character = updated
+                    self.sales_tax_field.value = str(updated['sales_tax'])
+                    self.status_text.value = f"Standings and skills synced, sales tax {updated['sales_tax']}%"
+                    self.status_text.color = ft.Colors.GREEN
+                else:
+                    self.status_text.value = f"Sync failed: {error}"
+                    self.status_text.color = ft.Colors.RED
+                self._refresh_hub_fees()
+                self.page.update()
+
+            self.page.run_task(_done)
+
+        Thread(target=_sync, daemon=True).start()
 
     def on_save(self, e):
         """Handle save button click"""

@@ -161,6 +161,52 @@ class ESIAPI:
             print(f"Error fetching character active orders: {e}")
             return None
 
+    def get_character_standings(self, character_id, access_token):
+        """Get character standings towards agents, NPC corporations and factions
+
+        Requires scope esi-characters.read_standings.v1.
+
+        Returns:
+            tuple: (standings_list, status_code); standings_list is None if failed
+        """
+        try:
+            url = f"{self.ESI_BASE_URL}/characters/{character_id}/standings/"
+            headers = {'Authorization': f'Bearer {access_token}'}
+
+            response = requests.get(url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                return response.json(), 200
+            print(f"Failed to fetch standings: {response.status_code} - {response.text}")
+            return None, response.status_code
+
+        except Exception as e:
+            print(f"Error fetching character standings: {e}")
+            return None, None
+
+    def get_character_skills(self, character_id, access_token):
+        """Get character trained skills
+
+        Requires scope esi-skills.read_skills.v1.
+
+        Returns:
+            tuple: (skills_list, status_code); skills_list is None if failed
+        """
+        try:
+            url = f"{self.ESI_BASE_URL}/characters/{character_id}/skills/"
+            headers = {'Authorization': f'Bearer {access_token}'}
+
+            response = requests.get(url, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                return response.json().get('skills', []), 200
+            print(f"Failed to fetch skills: {response.status_code} - {response.text}")
+            return None, response.status_code
+
+        except Exception as e:
+            print(f"Error fetching character skills: {e}")
+            return None, None
+
     def open_market_window(self, type_id, access_token):
         """Open the in-game market window for a specific item type.
 
